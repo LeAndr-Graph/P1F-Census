@@ -1,0 +1,241 @@
+P1F-Census -- environment variables
+===================================
+
+    P1F-Census.exe [N] [kThreads]        N = 14 | 16 | 18 | 20; default 18, 10 threads
+
+Everything else is read from the environment. Every output file goes to the CURRENT DIRECTORY --
+the folder the bat was started from -- and nothing is written outside it.
+
+A variable that is merely PRESENT enables its feature unless a value is shown below; the engines
+mostly test presence, not content. Shell difference: in cmd, `SET REP_X=` UNSETS the variable,
+while in bash `export REP_X=` sets it to empty, which still counts as present and therefore ON.
+`env_reset.bat` clears every variable listed here; each case bat calls it first, then sets only
+what it needs. The bats under runs\ and regression\ are the maintained examples.
+
+The four columns say which graph sizes accept the variable: x = read, . = ignored.
+
+
+1. Output and process
+---------------------
+
+Variable              Value       14 16 18 20  Meaning
+-----------------------------------------------------------------------------------------------
+RESULT                <path>      x  x  x  x   The run's single output file; required, created
+                                               fresh, and never appended to.
+REP_PRIORITY          normal      x  x  x  x   Opt out of the below-normal process priority the
+                                               engine sets at startup.
+
+
+2. What is searched
+-------------------
+
+Variable              Value       14 16 18 20  Meaning
+-----------------------------------------------------------------------------------------------
+REP_ORDERS            <list>      x  x  x  x   Comma-separated automorphism orders to classify in
+                                               one pass, e.g. 4,5,7,17,V4,3.
+REP_ORDER             <order>     x  x  x  x   A single order, same tokens; used when REP_ORDERS
+                                               is unset.
+REP_ONLYTYPES         <list>      x  x  x  x   1-based cycle-type indices to keep; every other
+                                               type of the chosen order is skipped.
+REP_NOSKIP            1           x  x  x  x   Also search the cycle types the engine would
+                                               normally skip.
+REP_FPF               presence    x  x  x  x   Restrict the run to the fixed-point-free type(s)
+                                               of the order.
+REP_SYMCAP            <n>         x  x  x  x   Centralizer-enumeration cap, default 2,000,000;
+                                               a larger type takes the level path instead.
+
+Order tokens: a number, or V4 (Klein four-group sweep), E9 (C3xC3 two-generator sweep), S3 (S3
+two-generator sweep). "order:target" stops that leg after `target` distinct classes.
+
+
+3. Speed and pruning
+--------------------
+
+Variable              Value       14 16 18 20  Meaning
+-----------------------------------------------------------------------------------------------
+REP_PRECALC           presence    x  x  x  x   Build each block's admissible orbit list once and
+                                               filter it, instead of regenerating per node.
+REP_PRUNELEVEL        <L>         x  .  x  x   Past factor-depth L, skip the per-node stabilizer
+                                               prune; the class set is unchanged.
+REP_TYPEMASK          1           x  .  x  .   Apply the one-per-pair rule while candidates are
+                                               generated rather than after.
+REP_SGEN              1           .  .  x  .   Enumerate the forced row on the quotient instead of
+                                               filtering generated output; needs REP_TYPEMASK.
+REP_DIAGPRUNE         <lo>[:<hi>] .  .  x  .   Cut nodes that a diagonal look-ahead shows cannot
+                                               complete, at depths lo..hi.
+REP_PATAPPLY          <mode>      x  .  x  .   Neighbour-0 pattern filter; mode is oneperpair,
+                                               calculate, or a fixed pattern with REP_PATTERN.
+REP_PATTERN           <S/W>       x  .  x  .   The target stay/swap string for REP_PATAPPLY's
+                                               fixed-pattern mode.
+REP_PATONLY           <S/W>       x  .  x  .   Older fixed-pattern form: restrict the search to
+                                               one full stay/swap pattern.
+REP_PATPAIR           presence    .  .  x  .   Select the one-per-pair filter on its own.
+REP_ROW4              S | W       .  .  x  .   Pin the type of row 4; unset leaves it free.
+REP_SWAPCAP           <n>         .  .  x  .   Cap the number of swap factors allowed in a cover.
+REP_NOPRUNE           presence    .  .  x  .   Disable the candidate closure-ban prune, for A/B
+                                               measurement.
+REP_DIVE              <budget>    x  x  x  x   Replace the exhaustive walk with random restarts of
+                                               `budget` nodes each; a harvest, not a census.
+REP_FANOUT            presence    x  x  x  x   Tally the per-depth tree shape and print it with
+                                               the progress line.
+
+
+4. Level, range and shards
+--------------------------
+
+Variable              Value       14 16 18 20  Meaning
+-----------------------------------------------------------------------------------------------
+REP_LEVEL             <L>         x  x  x  x   Enumerate the tree down to depth L and treat the
+                                               level-L nodes as independent blocks.
+REP_RANGE             <spec>      x  x  .  x   Which level-L blocks to process: start:end, or
+                                               start:end:step(timeout,results); refused by K18.
+REP_RAWSHARD          presence    x  x  x  x   Seed the traversal as trivial in the level, range
+                                               and shard modes.
+REP_SAMPLE            <stride>[:<cap>]
+                                  x  x  x  x   Process every `stride`-th branch and scale the
+                                               node counts to estimate the whole slice.
+REP_CANONFILE         <file>      .  .  x  .   Re-canonicalize an existing class file into RESULT
+                                               and stop, without searching.
+
+Unset REP_RANGE means COUNT the level and print the branch numbers instead of processing them.
+
+
+5. Block sweeps
+---------------
+
+Variable              Value       14 16 18 20  Meaning
+-----------------------------------------------------------------------------------------------
+REP_F2COUNT           presence    .  .  x  .   Count the level-2 blocks under a fixed first
+                                               factor.
+REP_F2FIXED           presence    .  .  x  .   Restrict REP_F2COUNT to second factors that the
+                                               generator fixes.
+REP_F2MAX             <n>         .  .  x  .   Cap the number of level-2 blocks examined.
+REP_F3COUNT           presence    x  .  x  .   Count the level-3 blocks, raw and canonical.
+REP_F3A               <n>         x  .  x  .   Which level-1 seed representative is the "a"
+                                               column; default 0.
+REP_F3COMPLETE        presence    x  .  x  .   Sweep the level-3 blocks, canonize each and
+                                               complete it, reporting the classes it holds.
+REP_F3START           <c>         x  .  x  .   First raw block to complete; also the resume point
+                                               printed at the end of every block line.
+REP_F3STOP            <c>         x  .  x  .   Last raw block to complete, inclusive; unset runs
+                                               to the end.
+REP_F3RAW             presence    x  .  x  .   Complete every raw block instead of only the
+                                               canonical ones.
+REP_F3LIST            <path>      x  .  x  .   Write the list of first-occurrence blocks.
+REP_F3DUMP            <path>      x  .  x  .   Dump each first-occurrence block's 3-factor
+                                               starter, one record per line.
+REP_OWNER             0           .  .  x  .   Set to 0 to turn the owner filter off; it is on by
+                                               default under REP_F3COMPLETE.
+REP_OWNERALL          presence    .  .  x  .   Print one line per rejected cover naming the block
+                                               that owns it; verbose.
+
+The owner filter writes a class only from the one block that is its canonical home, so any block
+range is self-contained and two ranges never write the same class. REP_OWNER and REP_OWNERALL
+require REP_F3COMPLETE; setting either for any other N stops the run before RESULT is created.
+
+
+6. Navigation and coordinates
+-----------------------------
+
+Variable              Value       14 16 18 20  Meaning
+-----------------------------------------------------------------------------------------------
+REP_NAVIGATE          a.b.c       .  .  x  .   Start block for navigation mode.
+REP_NAVSTEP           Da.Db.Dc    .  .  x  .   Per-step coordinate increment; default 0.0.1.
+REP_NAVSTEPS          <n>         .  .  x  .   Number of step positions; default 1.
+REP_NAVMAXBLK         <n>         .  .  x  .   Blocks to complete at a position before stepping
+                                               on; default 1.
+REP_NAVRES            <n>         .  .  x  .   Step on once this many new results have appeared.
+REP_NAVCAP            <sec>       .  .  x  .   Per-block time cap in navigation mode.
+REP_NAVEST            <probes>    .  .  x  .   Estimate each position instead of completing it.
+REP_NAVDUMP           presence    .  .  x  .   Dump the block's committed prefix factors.
+REP_COMPLETEPREFIX    <file>      .  .  x  .   Complete explicit prefixes read from a file instead
+                                               of an a.b.c coordinate.
+REP_CPCAP             <sec>       .  .  x  .   Per-record time cap for REP_COMPLETEPREFIX.
+REP_PATHCOORD         <file>      .  .  x  .   Report the block coordinate a.b.c of the target
+                                               cover(s) in that file.
+REP_PATHCOORDCANON    presence    .  .  x  .   Report the canonized a.b.c instead of the raw one.
+REP_PATHCOORDDIAG     presence    .  .  x  .   Extra diagnostics for the coordinate computation.
+REP_PATHCANON         presence    .  .  x  .   Stream all blocks and print the running count of
+                                               distinct canonical forms.
+REP_LOCATE            <f1[,f2..]> .  .  x  .   Load target factorizations and report which block
+                                               holds each.
+REP_BLOCKSFOR         <c>         x  .  x  .   List every raw block sharing this block's canonical
+                                               form.
+REP_CLASSBLOCKS       <file>      .  .  x  .   Read block indices and report which are first
+                                               occurrences of their starter.
+REP_CMAP              <file>      .  .  x  .   Load reference block ranks so the log prints them
+                                               on a common scale.
+REP_CDUMP             <file>      x  .  x  .   Dump the distinct canonical block ranks.
+REP_CANONCOUNT        <file>      .  .  x  .   Read covers from a file and count their canonical
+                                               classes.
+
+REP_LOCATE needs the same REP_LEVEL and REP_PRUNELEVEL as the run whose block numbers you want.
+
+
+7. Estimates
+------------
+
+Variable              Value       14 16 18 20  Meaning
+-----------------------------------------------------------------------------------------------
+REP_ESTIMATE          <probes>    x  x  x  x   Run this many probes per representative and no
+                                               search, giving a tree-size estimate.
+REP_ESTFILE           presence    x  x  x  x   Write the per-block estimate log.
+REP_EVENTFILE         presence    .  x  .  .   Write one "<classIdx> <blockIdx>" line per cover.
+
+The figure actually read during a run is the est-total in the [rep] progress line, which is
+printed whether or not these are set.
+
+
+8. Diagnostics and validation
+-----------------------------
+
+Variable              Value       14 16 18 20  Meaning
+-----------------------------------------------------------------------------------------------
+REP_WITNESS           presence    x  .  x  .   Transporter/injectivity check on the canonization.
+REP_VTEST             presence    x  .  x  .   Check the fast minimal image against the brute-force
+                                               oracle on real partial covers.
+REP_FTEST             presence    x  .  .  .   The same fast-vs-brute minimal-image check in K14.
+REP_CANONTEST         presence    x  .  .  .   Validate that the brute-force smallest image is a
+                                               class invariant.
+REP_CANONDIAG         presence    .  x  .  .   Ask the canonizer whether sampled raw covers are
+                                               already canonical.
+REP_CANONOVL          <level>     x  .  x  .   Tree-overlap probe at that level.
+REP_CANONKEY          presence    .  .  x  .   Use the full class key in the overlap probe instead
+                                               of the faster summary.
+REP_REPSCHECK         <file>      .  .  x  .   Read dumped representative covers and verify the
+                                               fast canonical form is invariant on each.
+REP_DUMPREPS          <file>      .  .  x  .   Dump the cover of every first-occurrence block.
+REP_DUMPFIRST         presence    .  .  x  .   Dump the first complete cover to dump_cover.txt and
+                                               stop the run.
+REP_BLOCKDUMP         presence    x  .  .  .   Dump the commit prefix of each distinct class as it
+                                               is found.
+REP_LEVELSTATS        presence    x  .  x  .   Print a per-level node-count and branching profile.
+REP_PRINTRAW          <n>         .  x  x  x   Dump the first n raw covers.
+REP_PRINTEACH         presence    .  .  x  .   Print one console line per result.
+REP_GENSTAT           presence    .  .  x  .   Tally candidates built against candidates kept, per
+                                               level.
+REP_PATSTAT           presence    x  .  x  .   Tally the stay/swap pattern of completions, with
+                                               counts and |Aut|.
+REP_PATLEVEL          <depth>     .  .  x  .   Also sample patterns at this mid-level depth.
+REP_PATSUB            <stride>    .  .  x  .   Mid-level pattern sample stride; default 256.
+REP_PATBYCLASS        presence    x  .  .  .   Collect neighbour-0-indexed patterns per canonical
+                                               class.
+REP_PDUMP             presence    .  .  x  .   Dump the row-pairing involution of each completion.
+REP_PROBE1            <level>     .  .  x  .   Pairing-invariant probe at that level.
+REP_NOORBCHK          presence    .  .  x  .   Skip the orbit-internal check, to measure its cost.
+REP_F17DUMP           presence    x  .  x  .   Sample the forced-last-factor obstruction and
+                                               refresh a live monitor file every ~5 s.
+REP_F17SUB            <stride>    x  .  x  .   Histogram subsample stride for REP_F17DUMP.
+REP_DIAGPROBE         <depth>     .  .  x  .   Run the diagonal look-ahead as a measurement only,
+                                               with no pruning, from that depth.
+REP_DIAGSUB           <stride>    .  .  x  .   Probe stride for REP_DIAGPROBE; default 1000.
+
+
+9. Refused names
+----------------
+
+A run that sets one of these stops and says so. They were removed because each could silently
+lose classes or misreport what a run did.
+
+    REP_PRELOAD    REP_INFO    KNA2_RESULT    REP_F3CAP    REP_F3L4    REP_CANDCAP
+    REP_TRIPLES  (renamed REP_PRECALC)        REP_F3MAX    (replaced by REP_F3STOP)

@@ -1,0 +1,51 @@
+x64/
+.vs/
+*.obj
+*.user
+*.log
+scratch/
+*.zip
+
+# The paper is not published from this repository. Keep manuscript sources out of
+# it: drafts live in the private research tree, and this repo carries the tool.
+# The built PDF is the same class of file as its source, and a binary that would
+# churn a diff on every rebuild: 2026-09-05, a `git add .` swept three manuscript
+# PDFs and a letter draft in here, because only the sources were listed.
+*.tex
+*.bbl
+*.aux
+*.pdf
+# ...and the drafts that are markdown rather than TeX -- a letter to a referee,
+# a manuscript kept in .md. Scoped to those names on purpose: a blanket *.md
+# would fight the "the ReadMe is tracked too" rule below and would silently
+# swallow every future docs/ spec and case ReadMe.
+docs/P1F_*.md
+docs/email_*.md
+
+# runs\: a case folder carries its run.bat and nothing else. Every file a run
+# produces -- the RESULT records and the .log -- is written straight to
+# AllResults\, and anything transient a long sweep leaves behind stays untracked.
+runs/**
+!runs/**/
+!runs/**/*.bat
+# The ReadMe is tracked too: the log no longer explains itself, so every description
+# that used to be printed lives in the case ReadMe now.
+!runs/**/ReadMe.md
+
+# regression\: the bats, the two comparators and the frozen
+# result_expected.txt files are tracked; a case's fresh output and its dumps
+# are not.
+regression/**/result.txt
+regression/**/result_pfile.txt
+# a multi-run case names one RESULT per block (result133.txt, result1777.txt, ...); the digit
+# keeps this clear of the frozen result_expected.txt
+regression/**/result[0-9]*.txt
+regression/**/tmp.txt
+regression/**/*.diff
+
+# AllResults\: TRACKED in full -- the finished census output, the catalog that merges
+# it, and AllResults\ReadMe.md describing both. Large (~13 MB), but a baseline that a
+# fresh run is compared against is worth carrying: regenerating it costs days of
+# compute. Nothing in there is edited by hand; a file changes only when the runs\
+# case that produces it is re-run. .gitattributes pins those .txt files to -text so
+# their bytes survive the round trip unchanged. See AllResults\ReadMe.md.
