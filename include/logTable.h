@@ -2,7 +2,7 @@
 // =============================================================================
 // include/logTable.h -- the ONE writer for every table in a p1f run log.
 //
-// Spec: docs/log_table_spec.md.  Shared by all four engines and p1f.cpp, so the
+// Shared by all four engines and p1f.cpp, so the
 // sibling rule holds by construction: one copy of the formatting, not four.
 //
 // It knows nothing about P1Fs, blocks or automorphisms -- it turns counts into

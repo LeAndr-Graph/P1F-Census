@@ -37,7 +37,7 @@
 
 #include "k18a2.h"
 #include "cgtEngine.h"   // shared computational-group-theory engine (BSGS, edgeStabGens, setwiseStab)
-#include "logTable.h"   // the run log IS a table -- one writer for all four engines (docs/log_table_spec.md)
+#include "logTable.h"   // the run log IS a table -- one writer for all four engines
 #include <cstdint>
 #include <intrin.h>   // _BitScanForward (genM bitmask candidate iteration)
 #include <random>     // std::mt19937 (REP_ESTIMATE Knuth tree-size probes)
@@ -893,7 +893,7 @@ static inline bool partialAllSym(const std::vector<Match>& F) {   // every facto
     return true;
 }
 
-// [PRECALC] REP_PRECALC=1 -- PROTOTYPE (docs/k20_order3_triple_lists_spec.md). Enumerable
+// [PRECALC] REP_PRECALC=1 -- PROTOTYPE. Enumerable
 // block-threading pool only, trivial-stabilizer nodes only (REP_PRUNELEVEL=1 makes every node
 // below a seed trivial). The sigma-orbits admissible below a seed are enumerated
 // ONCE into a list; every node below inherits its parent's index list filtered by the orbit
@@ -986,7 +986,7 @@ int  g_order = 0, g_typeIdx = 0, g_numTypes = 0;    // current order, current cy
 
 // The two identity cells of a column-set-A row: what printSubset() used to print as
 // [SUBSET].  Wording is unchanged; only the
-// destination changed -- these are table cells now.  See docs/log_table_spec.md 3.
+// destination changed -- these are table cells now.
 static void subsetCells(int order, bool isV4, bool isE9, bool isS3, const char* tstr,
                         std::string& symmetry, std::string& type)
 {
@@ -1005,7 +1005,7 @@ static void subsetCells(int order, bool isV4, bool isE9, bool isS3, const char* 
     type = t;
 }
 
-// ---- the run's ONE table (docs/log_table_spec.md 2) --------------------------------------------
+// ---- the run's ONE table --------------------------------------------
 // Column set A.  Widths are minimums; Saved is last
 // and so is never padded, which is why its histogram may run as wide as it needs to.
 static const LogCol kColsA[] = {
@@ -1032,7 +1032,7 @@ static LogTable* g_tbl = nullptr;
 // Run totals for the ~ and = rows.  The = row is the SUM of the rows printed above it, so
 // every one of these is accumulated at the point its per-unit value is computed -- never
 // re-derived from a separate clock or counter, which is how the old log came to print two
-// different numbers for one quantity.  docs/log_table_spec.md 0, 2c.
+// different numbers for one quantity.
 static std::map<int, int> g_runSavedAut;    // |Aut| -> classes written by the RUN
 static std::map<int, int> g_runDupAut;      // |Aut| -> duplicates rejected by the RUN
 static long long g_runFound  = 0;           // distinct classes found by the RUN   (Results)
@@ -1678,7 +1678,6 @@ struct RepWorker {
     // on the FIRST one instead of collecting -- cheap while candidates are plentiful, expensive exactly
     // when it is about to report none. a=4 rule: a fixed factor carries exactly one diagonal, so no
     // second diagonal may be placed (that is the `~(1u << um)` term).
-    // docs/log_table_spec.md 0, 2c, 2d.
     // [SPRUNE 2026-09-10] Hamiltonicity is now enforced INCREMENTALLY, with genM's closure ban, instead
     // of at the leaf. The VTune profile of the a=4 fast path after the list walk was fixed put this
     // function and its leaf is_perfect loop at ~68% of all CPU: a dead diagonal cost a complete
@@ -1688,7 +1687,6 @@ struct RepWorker {
     // cycle shorter than N with that row. The one exception is the last edge of the matching, whose
     // closure IS the Hamiltonian N-cycle. A completed matching therefore has every row Hamiltonian by
     // construction and the leaf test is gone.
-    // docs/log_table_spec.md 0, 2c, 2d.
     // Same answer as before: a branch this refuses can never complete to a matching Hamiltonian with
     // that row, so no witness is lost; and every witness it accepts passed the same condition the old
     // leaf loop tested. The census tree is untouched (this decides a node's fate, not its children).
@@ -1767,7 +1765,6 @@ struct RepWorker {
     }
     // Is some uncovered diagonal unrealizable at this node? Used both by the measurement (diagProbe)
     // and by the prune (REP_DIAGPRUNE), so the two can never disagree.
-    // docs/log_table_spec.md 0, 2c, 2d.
     // parentSize = the row count of the node whose witnesses may be reused (-1: none). The measured
     // cost split (blocks 1777-1780, 8 threads): 141M diagRealizable calls for 64M census nodes, 60% of
     // them live, each search only ~10-14 sExists nodes -- so the price is the NUMBER of searches and
@@ -2443,12 +2440,10 @@ struct RepWorker {
     // [TYPEMASK] The genM hook at u==1, restated as a predicate on a finished entry so the list
     // walk can apply it too. genM masks vertex 1's partner while the matching is being built; here
     // the matching already exists, so the same rule becomes a test on its base row.
-    // docs/log_table_spec.md 0, 2c, 2d.
     // It CANNOT be baked into the list at build time: patRowType() reads `chosen`, so the verdict
     // changes as factors are committed. The list is built once at the block prefix and already
     // carries the mask AS OF THAT PREFIX -- entries that go bad deeper were never re-checked, and
     // that is what this restores.
-    // docs/log_table_spec.md 0, 2c, 2d.
     // The companion u>=2 rule (a W factor may hold no diagonal) needs no restating: it depends on
     // the entry alone, so genM already enforced it when the list was built.
     bool typeMaskOK(const OrbEnt& ce) const {
@@ -2519,7 +2514,6 @@ struct RepWorker {
     }
 
     // [PRECALC] local recursion (used when the shared queue is full), same tree as splitNodeL.
-    // docs/log_table_spec.md 0, 2c, 2d.
     // [TUNE 2026-09-07] This is where the nodes are: the pool expands ONE level per queue item and
     // drains whole subtrees here once the queue is at QCAP, so nearly every node in the run is a
     // coverLocal call. The old version went through splitNodeL and therefore paid, per node, a
@@ -2529,7 +2523,6 @@ struct RepWorker {
     // already sitting in ce.rows. None of that is needed on a depth-first path: the parent's list
     // stays alive on the stack for the whole subtree, so it can live in a per-thread buffer indexed
     // by recursion depth, and the child can be committed straight from the entry.
-    // docs/log_table_spec.md 0, 2c, 2d.
     // The tree is UNCHANGED: same nodes++ per node, same anchor, same candidate order, same emit.
     std::vector<NodeList> orbBuf;     // one reusable admissible-list per recursion depth
 
@@ -2950,7 +2943,7 @@ void enumShapesS3(std::vector<GrpShape>& out) {
 // deduplicates them, forwards each distinct class to resultCallback, and prints a
 // summary (only when m_bPrint). Worker count = kThreads.
 // =============================================================================
-// The table's LAST row (docs/log_table_spec.md 2c).  It is emitted here, not at the end of
+// The table's LAST row.  It is emitted here, not at the end of
 // runRepresentativeMethod, because that function runs once per REP_ORDERS token while the table
 // spans the whole run -- printing a TOTAL per token would be six totals and no total.
 // Every figure is the per-unit accumulation of the rows above, so the = row is exactly their sum;
@@ -3127,7 +3120,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     g_target = target; g_stop.store(false); g_harvest.clear(); g_banked.store(0); g_f1.store(0); g_f2.store(0); g_autHist.clear(); g_dupCovers.store(0);   // harvest mode (target>0 -> stop after `target` classes)
     // Live result emission: every globally-new class goes straight to the normal result
     // pipeline (mutex-serialized in emit()); a long or killed run keeps everything sent.
-    g_sendResult = [this](const unsigned char* s, int aut) { if (resultCallback) resultCallback(cbClass, s, aut, 1, 2); };   // |Aut| rides the callback's free r4 slot (docs/owner_filter_spec.md 6.7)
+    g_sendResult = [this](const unsigned char* s, int aut) { if (resultCallback) resultCallback(cbClass, s, aut, 1, 2); };   // |Aut| rides the callback's free r4 slot
     g_t0 = std::chrono::steady_clock::now();
     g_f17Total.store(0); g_f17NextSec.store(60); g_maxKids.store(0); g_maxNQ.store(0); g_monNextSec.store(5); { std::lock_guard<std::mutex> lk(g_f17_mtx); g_f17Hist.clear(); g_f17ClashHist.clear(); }   // [DIAG] REP_F17DUMP reset
     g_last_print = g_t0;
@@ -3215,7 +3208,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     std::vector<GrpShape> gshapes;                  // E9/S3: fully-constructed group shapes
     if (isV4) enumShapesV4(shapes); else if (isE9) enumShapesE9(gshapes); else if (isS3) enumShapesS3(gshapes); else enumTypes(order, types);
     g_numTypes = (int)(isV4 ? shapes.size() : isGrp ? gshapes.size() : types.size());
-    // The run's ONE table (docs/log_table_spec.md 2a).  runRepresentativeMethod is called once
+    // The run's ONE table.  runRepresentativeMethod is called once
     // per REP_ORDERS token, so this is guarded: the title, and the first column-name row, are
     // printed by the FIRST token and every later token adds rows to the same table.  The block
     // driver builds its own table (column set B) and is excluded here.
@@ -3400,7 +3393,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                           : g_patPair ? "REP_PATPAIR" : g_patApply ? "REP_PATAPPLY"
                           : g_diagPruneLo > 0 ? "REP_DIAGPRUNE" : nullptr;
           if (bad) { printf("[K18-REP] %s needs a fixed-point-free sigma0, but type %s (about to be searched) fixes %d vertices -- stop\n", bad, tstr, nfix); fflush(stdout); exit(1); }
-          }   // [SUBSET] is gone: column set A puts its two facts in the Symmetry and Type columns, and the block driver puts them in the table title (docs/log_table_spec.md 2a, 3)
+          }   // [SUBSET] is gone: column set A puts its two facts in the Symmetry and Type columns, and the block driver puts them in the table title
         // [DIAGPRUNE] Sound only in the a=4 column: there every sigma0-fixed factor carries exactly ONE
         // diagonal (dichotomy + 9 S rows for 9 diagonals). In the a=0 column the single fixed factor is D,
         // which carries all nine, so the probe's one-diagonal rule would reject the very row that must exist.
@@ -3479,7 +3472,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             // one core (cover() has no fan-out; splitNode does). splitNode needs the root BSGS,
             // which otherwise only the over-cap setup builds -- so build it here, by exactly the
             // calls that setup uses. Also built for REP_LEVEL > 1, whose level-L frontier is
-            // expanded by splitNode on this path too (docs/k20_order3_level_partition_spec.md).
+            // expanded by splitNode on this path too.
             // Without either, none of this is built and nothing changes.
             // (k18 refuses REP_RANGE at startup; the REP_LEVEL > 1 count is reachable. Kept identical anyway.)
             if (rangeMode || shardLevel > 1) {
@@ -3790,7 +3783,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     // the closed form at K14 order 2, where it builds exactly 2^6*6!/2 = 23,040.
                     //
                     // Branches are taken in sequence, as on the k20 plain path: no queue, no cap,
-                    // no work handed back. See docs/k18_doubles_spec.md.
+                    // no work handed back.
                     //
                     // NOTE the prototype covers trivial-stabilizer nodes only, so it needs
                     // REP_PRUNELEVEL=1 -- which t8 and t9 already run with, so the per-node dedup
@@ -3892,7 +3885,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 // half is what was ASKED for, so a stop beyond the last block shows up as a difference
                 // between them instead of passing unnoticed. Printed for every block-driven run, owner
                 // filter or not: it is the denominator every later per-block line is read against.
-                // [TABLE] Column set B (docs/log_table_spec.md 4).  Exactly ONE subset per run here, so
+                // [TABLE] Column set B.  Exactly ONE subset per run here, so
                 // the subset is the TITLE, not a column: it carries what [SUBSET] carried, and the range
                 // caption above, unchanged wording, sits under it, so
                 // both are handed to LogTable as one two-line title.  Done%'s denominator is the raw
@@ -4020,7 +4013,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 // block and are skipped. No "last block" is reported: it would be the last COMPLETED
                 // one, which stalls short of the true end whenever the range closes on skipped blocks.
                 // The two [F3COMPLETE] DONE: lines are REPLACED by the = row, which already carries
-                // saved and duplicates in the same columns every block row used (docs/log_table_spec.md 4).
+                // saved and duplicates in the same columns every block row used.
                 // Only the facts with no column survive, as footnotes under the table: how many blocks in
                 // the range were canonical -- the rest are relabelings of an earlier block and are skipped
                 // -- and the |Aut| > 2 rejection histogram. No "last block" is reported: it would be the
@@ -4708,7 +4701,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             // counts, search nothing) and RANGE (lazy in-order DFS to depth L keeping only the
             // branches in [start,end), then the block-threading pool below). Level-L indices
             // are DFS order over (rep index, child order), so slices compose exactly, as on the
-            // over-cap path. Spec: docs/k20_order3_level_partition_spec.md.
+            // over-cap path.
             size_t lo = 0, hi = reps.size();
             const bool deepShard = (shardLevel > 1);
             if (shardLevel > 0 && m_bPrint) {
@@ -4970,7 +4963,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             // what was WRITTEN and what was REJECTED, so the rows' Saved histograms sum to the census.
             const long long dups  = g_crossDup.load(std::memory_order_relaxed) - dupBefore;
             const long long found = (long long)(gcanon.size() - before);
-            // One ROW per leg (docs/log_table_spec.md 3).  The blank marker says the numbers are
+            // One ROW per leg.  The blank marker says the numbers are
             // this leg's own; the run totals it feeds are what the ~ and = rows report.  A leg that
             // was never entered is one row with `skipped` in Elapsed and the rest blank.
             g_runFound += found; g_runSaved += found - dups; g_runDups += dups; g_runNodes += typeNodes; g_runSec += tsec;
