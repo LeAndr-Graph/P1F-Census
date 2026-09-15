@@ -1351,7 +1351,6 @@ struct RepWorker {
     }
 
     // [PRECALC] local recursion (used when the shared queue is full), same tree as splitNodeL.
-    //
     // [TUNE 2026-09-07] This is where the nodes are: the pool expands ONE level per queue item and
     // drains whole subtrees here once the queue is at QCAP, so nearly every node in the run is a
     // coverLocal call. The old version went through splitNodeL and therefore paid, per node, a
@@ -1361,7 +1360,6 @@ struct RepWorker {
     // already sitting in ce.rows. None of that is needed on a depth-first path: the parent's list
     // stays alive on the stack for the whole subtree, so it can live in a per-thread buffer indexed
     // by recursion depth, and the child can be committed straight from the entry.
-    //
     // The tree is UNCHANGED: same nodes++ per node, same anchor, same candidate order, same emit.
     std::vector<NodeList> orbBuf;     // one reusable admissible-list per recursion depth
 

@@ -89,7 +89,7 @@ Two other lines are normal, not errors:
 
 - `type 3² 1¹⁴ | skipped` and `type 3⁴ 1⁸ | skipped` — those types are empty, so only `3⁶ 1²` is
   searched.
-- `P1F-Census: process priority BELOW NORMAL` — the run yields the machine the moment you need it.
+- `P1F: process priority BELOW NORMAL` — the run yields the machine the moment you need it.
 
 Killing a run early keeps every class found up to that point.
 

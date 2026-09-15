@@ -49,8 +49,8 @@ Windows, Visual Studio 2022 or later, x64. No external dependencies.
 build.bat
 ```
 
-This locates MSBuild through `vswhere` and builds `P1F-Census.sln` in Release|x64, producing
-`x64\Release\P1F-Census.exe`. Pass `nopause` to skip the closing prompt when scripting it.
+This locates MSBuild through `vswhere` and builds `p1f.sln` in Release|x64, producing
+`x64\Release\p1f.exe`. Pass `nopause` to skip the closing prompt when scripting it.
 
 ## Reproducing a result
 
@@ -92,7 +92,7 @@ needs no setup. Two variables override that when you need them to:
 
 ```bat
 SET "P1F_ROOT=D:\somewhere\P1F-Census"
-SET "P1F_EXE=D:\somewhere\P1F-Census\x64\Debug\P1F-Census.exe"
+SET "P1F_EXE=D:\somewhere\P1F-Census\x64\Debug\p1f.exe"
 ```
 
 ## Layout
@@ -122,7 +122,7 @@ output. Exit code 0 means all passed. Run it after any change to the engine.
 
 ## Configuration
 
-The engine takes two positional arguments — `P1F-Census.exe [N] [kThreads]`, N one of 14, 16, 18,
+The engine takes two positional arguments — `p1f.exe [N] [kThreads]`, N one of 14, 16, 18,
 20 — and reads everything else from environment variables. All of them are documented in
 [`docs/env_variables.txt`](docs/env_variables.txt); the `run.bat` files are the maintained
 examples of how they combine.

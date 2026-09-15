@@ -353,7 +353,7 @@ gives that block a row whose `Total saved(duplicates)` reads `0(1)`, and the foo
 ### 6.1 How the six known classes were pinned (2026-08-28)
 
     perl tools/known_starters.pl > known.txt
-    REP_CANONFILE=known.txt RESULT=known_canon.txt P1F-Census.exe 18 4
+    REP_CANONFILE=known.txt RESULT=known_canon.txt p1f.exe 18 4
     perl tools/compare_to_catalog.pl --index known_canon.txt
 
 `tools\known_starters.pl` develops each published starter into all 17 rounds. The engine then

@@ -1678,7 +1678,6 @@ struct RepWorker {
     // on the FIRST one instead of collecting -- cheap while candidates are plentiful, expensive exactly
     // when it is about to report none. a=4 rule: a fixed factor carries exactly one diagonal, so no
     // second diagonal may be placed (that is the `~(1u << um)` term).
-    //
     // [SPRUNE 2026-09-10] Hamiltonicity is now enforced INCREMENTALLY, with genM's closure ban, instead
     // of at the leaf. The VTune profile of the a=4 fast path after the list walk was fixed put this
     // function and its leaf is_perfect loop at ~68% of all CPU: a dead diagonal cost a complete
@@ -1688,7 +1687,6 @@ struct RepWorker {
     // cycle shorter than N with that row. The one exception is the last edge of the matching, whose
     // closure IS the Hamiltonian N-cycle. A completed matching therefore has every row Hamiltonian by
     // construction and the leaf test is gone.
-    //
     // Same answer as before: a branch this refuses can never complete to a matching Hamiltonian with
     // that row, so no witness is lost; and every witness it accepts passed the same condition the old
     // leaf loop tested. The census tree is untouched (this decides a node's fate, not its children).
@@ -1767,7 +1765,6 @@ struct RepWorker {
     }
     // Is some uncovered diagonal unrealizable at this node? Used both by the measurement (diagProbe)
     // and by the prune (REP_DIAGPRUNE), so the two can never disagree.
-    //
     // parentSize = the row count of the node whose witnesses may be reused (-1: none). The measured
     // cost split (blocks 1777-1780, 8 threads): 141M diagRealizable calls for 64M census nodes, 60% of
     // them live, each search only ~10-14 sExists nodes -- so the price is the NUMBER of searches and
@@ -2443,12 +2440,10 @@ struct RepWorker {
     // [TYPEMASK] The genM hook at u==1, restated as a predicate on a finished entry so the list
     // walk can apply it too. genM masks vertex 1's partner while the matching is being built; here
     // the matching already exists, so the same rule becomes a test on its base row.
-    //
     // It CANNOT be baked into the list at build time: patRowType() reads `chosen`, so the verdict
     // changes as factors are committed. The list is built once at the block prefix and already
     // carries the mask AS OF THAT PREFIX -- entries that go bad deeper were never re-checked, and
     // that is what this restores.
-    //
     // The companion u>=2 rule (a W factor may hold no diagonal) needs no restating: it depends on
     // the entry alone, so genM already enforced it when the list was built.
     bool typeMaskOK(const OrbEnt& ce) const {
@@ -2519,7 +2514,6 @@ struct RepWorker {
     }
 
     // [PRECALC] local recursion (used when the shared queue is full), same tree as splitNodeL.
-    //
     // [TUNE 2026-09-07] This is where the nodes are: the pool expands ONE level per queue item and
     // drains whole subtrees here once the queue is at QCAP, so nearly every node in the run is a
     // coverLocal call. The old version went through splitNodeL and therefore paid, per node, a
@@ -2529,7 +2523,6 @@ struct RepWorker {
     // already sitting in ce.rows. None of that is needed on a depth-first path: the parent's list
     // stays alive on the stack for the whole subtree, so it can live in a per-thread buffer indexed
     // by recursion depth, and the child can be committed straight from the entry.
-    //
     // The tree is UNCHANGED: same nodes++ per node, same anchor, same candidate order, same emit.
     std::vector<NodeList> orbBuf;     // one reusable admissible-list per recursion depth
 
@@ -3041,7 +3034,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     // order-2 census whether or not blocks dedup among themselves. See the note at g_aut2Only.
     g_aut2Only = std::getenv("REP_F3COMPLETE") != nullptr;
     // (An EXPLICIT REP_OWNER without REP_F3COMPLETE, or on any N but 18, is refused by
-    //  checkOwnerEnv() in P1F-Census.cpp -- in the host, so it exits 1 and never creates RESULT.
+    //  checkOwnerEnv() in p1f.cpp -- in the host, so it exits 1 and never creates RESULT.
     //  The default reaches neither case: it is conditioned on REP_F3COMPLETE, which is k18-only.)
     g_sGen = std::getenv("REP_SGEN") != nullptr;             // [SGEN] forced-S rows enumerate on the quotient
     g_patStat = std::getenv("REP_PATSTAT") != nullptr;       // [DIAG] sigma0 stay/swap pattern tally (completions + forced-17th + optional mid-level)
@@ -3765,7 +3758,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             // The range is stated by its ENDS -- the two numbers the log prints, and the same numbers a
             // resume value is read off. REP_F3STOP is the LAST raw block c, INCLUSIVE, not a count.
             // Everything below still works in a count, so the count is derived here and nowhere else.
-            // (The old REP_F3MAX is refused by checkRemovedEnv() in P1F-Census.cpp: reading a count as a stop
+            // (The old REP_F3MAX is refused by checkRemovedEnv() in p1f.cpp: reading a count as a stop
             // would silently run the wrong range.)
             const long long f3stop  = std::getenv("REP_F3STOP")  ? atoll(std::getenv("REP_F3STOP"))  : -1;  // last RAW block c, inclusive (unset = to the end of the column)
             const long long f3max   = f3stop < 0 ? -1 : (f3stop < f3start ? 0 : f3stop - f3start + 1);      // # RAW blocks from F3START; a stop below the start asks for nothing
@@ -5015,7 +5008,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
         // this line printed 0. It used to print the preload count, which hid the gap.
         const size_t distinctAll = g_harvest.size() > gcanon.size() ? g_harvest.size() : gcanon.size();
         // No end-of-order summary line: what this run enumerated is stated by the table's title, the
-        // running tallies are its ~ rows, and the totals are its = row and the closing "P1F-Census: done"
+        // running tallies are its ~ rows, and the totals are its = row and the closing "P1F: done"
         // line. Harvest mode still speaks up, because
         // "stopped at a target" is not the same outcome as "finished".
         if (harvested)

@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# compare.pl -- verdict for one P1F-Census regression case.
+# compare.pl -- verdict for one p1f regression case.
 #
 #   perl compare.pl <case> <actual> <expected> [<diff-out>]
 #
@@ -13,15 +13,15 @@
 #   3. still different         -> FAIL + a content report, and the full sorted
 #                                 diff written to <diff-out>
 #
-# Handles the record file P1F-Census writes now, and the two legacy layouts its frozen
+# Handles the record file p1f writes now, and the two legacy layouts its frozen
 # baselines were captured in:
 #
-#   RESULT      "#7 |Aut| = 12" + quoted matrix rows -- the only thing P1F-Census writes
+#   RESULT      "#7 |Aut| = 12" + quoted matrix rows -- the only thing p1f writes
 #               today. The leading #<seq> counts write order within one file and
 #               renumbers whenever records land in a different order, so it is
 #               stripped before comparing, exactly like the P-file counter.
 #
-# LEGACY (read-only: no P1F-Census build produces these any more)
+# LEGACY (read-only: no p1f build produces these any more)
 #   REP_INFO    "# block <a.b.c>  pattern <SW...>  |Aut| <n>  new" + matrix rows
 #               ("# dup block ..." attribution lines are compared as their own
 #                one-line records)

@@ -1,7 +1,7 @@
-P1F-Census -- environment variables
+p1f -- environment variables
 ===================================
 
-    P1F-Census.exe [N] [kThreads]        N = 14 | 16 | 18 | 20; default 18, 10 threads
+    p1f.exe [N] [kThreads]        N = 14 | 16 | 18 | 20; default 18, 10 threads
 
 Everything else is read from the environment. Every output file goes to the CURRENT DIRECTORY --
 the folder the bat was started from -- and nothing is written outside it.

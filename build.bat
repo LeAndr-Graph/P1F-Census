@@ -1,5 +1,5 @@
 @echo off
-REM Build P1F-Census (Release^|x64): locate MSBuild via vswhere, then build the sln.
+REM Build p1f (Release^|x64): locate MSBuild via vswhere, then build the sln.
 REM
 REM  Started from Explorer, this bat owns its console window and closing it takes the result
 REM  with it -- so every way out of here pauses first, the three failures included, since a
@@ -31,8 +31,8 @@ if not defined MSBUILD (
     if %nopause% == 0 pause
     exit /b 1
 )
-echo Building P1F-Census.sln...
-%MSBUILD% P1F-Census.sln /p:Configuration=Release /p:Platform=x64
+echo Building p1f.sln...
+%MSBUILD% p1f.sln /p:Configuration=Release /p:Platform=x64
 if %ERRORLEVEL% neq 0 (
     echo "Build failed."
     if %nopause% == 0 pause
