@@ -5008,7 +5008,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
         // this line printed 0. It used to print the preload count, which hid the gap.
         const size_t distinctAll = g_harvest.size() > gcanon.size() ? g_harvest.size() : gcanon.size();
         // No end-of-order summary line: what this run enumerated is stated by the table's title, the
-        // running tallies are its ~ rows, and the totals are its = row and the closing "P1F: done"
+        // running tallies are its ~ rows, and the totals are its = row and the closing "p1f.exe:" line
         // line. Harvest mode still speaks up, because
         // "stopped at a target" is not the same outcome as "finished".
         if (harvested)

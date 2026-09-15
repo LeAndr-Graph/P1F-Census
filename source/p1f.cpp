@@ -110,8 +110,8 @@ static bool checkRemovedEnv() {
     };
     bool bad = false;
     for (const auto& r : removed)
-        if (std::getenv(r[0])) { printf("P1F: %s is no longer supported -- %s\n", r[0], r[1]); bad = true; }
-    if (bad) printf("P1F: unset the variable(s) above and re-run -- stop\n");
+        if (std::getenv(r[0])) { printf("p1f.exe: %s is no longer supported -- %s\n", r[0], r[1]); bad = true; }
+    if (bad) printf("p1f.exe: unset the variable(s) above and re-run -- stop\n");
     return !bad;
 }
 
@@ -133,7 +133,7 @@ static bool checkOwnerEnv(int np) {
     if (!owner && !ownerAll) return true;
     const char* name = owner ? "REP_OWNER" : "REP_OWNERALL";
     if (np != 18) {
-        printf("P1F: %s is k18-only, and N=%d was requested.\n"
+        printf("p1f.exe: %s is k18-only, and N=%d was requested.\n"
                "      Ownership is the minimum BLOCK index over a class's column labelings, and only\n"
                "      k18 has blocks (the a.b.c coordinate and the REP_F3COMPLETE driver). With no\n"
                "      column there is nothing to own, so this run would NOT be shard-disjoint however\n"
@@ -141,7 +141,7 @@ static bool checkOwnerEnv(int np) {
         return false;
     }
     if (!std::getenv("REP_F3COMPLETE")) {
-        printf("P1F: %s needs REP_F3COMPLETE.\n"
+        printf("p1f.exe: %s needs REP_F3COMPLETE.\n"
                "      Ownership is defined against a block column; without the block driver there is\n"
                "      no column, no block index and nothing to own -- stop\n", name);
         return false;
@@ -218,7 +218,7 @@ static void printEnv() {
         if (!line.empty()) line += "  ";
         line += names[i]; line += "="; line += v;
     }
-    if (!line.empty()) printf("P1F: Requested %s\n", line.c_str());
+    if (!line.empty()) printf("p1f.exe: Requested %s\n", line.c_str());
 }
 
 int main(int argc, const char* argv[]) {
@@ -242,9 +242,9 @@ int main(int argc, const char* argv[]) {
         const bool normalPri = (pr && (!strcmp(pr, "normal") || !strcmp(pr, "NORMAL")));
         if (!normalPri) {
             if (SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS))
-                printf("P1F: process priority BELOW NORMAL (REP_PRIORITY=normal to opt out)\n");
+                printf("p1f.exe: process priority BELOW NORMAL (REP_PRIORITY=normal to opt out)\n");
             else
-                printf("P1F: could not lower process priority (error %lu) -- running at the default\n", GetLastError());
+                printf("p1f.exe: could not lower process priority (error %lu) -- running at the default\n", GetLastError());
         }
     }
     // g_useColors is gone (2026-08-30). It gated the type string's superscripts on
@@ -256,15 +256,15 @@ int main(int argc, const char* argv[]) {
     if (!checkRemovedEnv()) return 1;
     if (!checkOwnerEnv(np)) return 1;
     const char* resPath = std::getenv("RESULT");
-    if (!resPath || !*resPath) { printf("P1F: RESULT=<path> is required -- it is the run's only output -- stop\n"); return 1; }
+    if (!resPath || !*resPath) { printf("p1f.exe: RESULT=<path> is required -- it is the run's only output -- stop\n"); return 1; }
     // Refuse an existing file, before the engine does any work: a run is never resumed into its own
     // output, and a finished census must not be silently appended to or overwritten.
-    if (_access(resPath, 0) == 0) { printf("P1F: RESULT file %s already exists -- delete it or name another file -- stop\n", resPath); return 1; }
+    if (_access(resPath, 0) == 0) { printf("p1f.exe: RESULT file %s already exists -- delete it or name another file -- stop\n", resPath); return 1; }
     g_resFp = fopen(resPath, "w");
-    if (!g_resFp) { printf("P1F: cannot create %s -- stop\n", resPath); return 1; }
-    printf("P1F: built %s, N=%d, kThreads=%d, RESULT saved to %s\n",
+    if (!g_resFp) { printf("p1f.exe: cannot create %s -- stop\n", resPath); return 1; }
+    printf("p1f.exe: built %s, N=%d, kThreads=%d, RESULT saved to %s\n",
            buildStamp(), np, kThreads, resPath);
-    printf("P1F: started %s on %s\n", startStamp(), hostName());
+    printf("p1f.exe: started %s on %s\n", startStamp(), hostName());
     printEnv();
     const auto tStart = std::chrono::steady_clock::now();   // whole-run clock; reported once, on the closing line
 
@@ -283,13 +283,13 @@ int main(int argc, const char* argv[]) {
     case 20: { const FactorParams fp(K20A2::NP, K20A2::NM, K20A2::NFIXED, K20A2::M_MAX, 0);
                g_resNP = K20A2::NP; g_resNM = K20A2::NM; buildFixedRows(K20A2::NP, K20A2::NFIXED, fixed);
                solver = new K20A2(fp, 0, kThreads, fixed, saveResult, nullptr, true); break; }
-    default: printf("P1F: N=%d not supported (14, 16, 18, 20) -- stop\n", np); return 1;
+    default: printf("p1f.exe: N=%d not supported (14, 16, 18, 20) -- stop\n", np); return 1;
     }
     solver->solve();
     delete solver;
     fclose(g_resFp);
     const double totMin = std::chrono::duration<double>(std::chrono::steady_clock::now() - tStart).count() / 60.0;
-    printf("P1F: %d result(s) written to %s (Total time=%.0fmin)\n", g_resCount, resPath, totMin);
+    printf("p1f.exe: %d result(s) written to %s (Total time=%.0fmin)\n", g_resCount, resPath, totMin);
     printf("End of job\n");   // last line of every completed run: a log that stops short of it was interrupted
     fflush(stdout);
     return 0;
