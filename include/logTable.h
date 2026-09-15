@@ -9,10 +9,40 @@
 // aligned text.  Callers hand it cells already formatted by the fmt* helpers.
 // =============================================================================
 #include <cstdio>
+#include <cstdarg>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 #include <map>
+
+// ExtPrint -- how much of the run's own bookkeeping reaches the log.
+//
+//   0 (default)  the census only: the header, one row per block, the totals.
+//   >= 1         adds the engine's trace lines -- SETUP timings, PRECALC list
+//                sizes, SHARD/LEVEL branch counts, the per-block branch split.
+//
+// Read once, on the first call, so a long run never pays for it and a variable
+// changed mid-run cannot make the top and bottom of one log disagree.
+inline int extPrint() {
+    static const int level = []() {
+        const char* e = std::getenv("ExtPrint");
+        return (e && *e) ? std::atoi(e) : 0;
+    }();
+    return level;
+}
+
+// printf for a trace line: prints only at ExtPrint >= 1. Warnings, errors and
+// anything a reader needs in order to trust the result keep plain printf --
+// what is gated here is volume, never meaning.
+inline int xprintf(const char* fmt, ...) {
+    if (extPrint() < 1) return 0;
+    va_list ap;
+    va_start(ap, fmt);
+    const int n = vprintf(fmt, ap);
+    va_end(ap);
+    return n;
+}
 
 // A column.  `width` is a MINIMUM: an over-wide cell pushes the rest of its row
 // right rather than being truncated, because a truncated count is a wrong count.

@@ -197,9 +197,14 @@ static const char* hostName() {
 // Every REP_* variable actually set, on one line. A run whose log does not state its own knobs
 // cannot be reproduced from the log, and env_reset.bat exists because a leftover knob
 // silently changing a run is a real failure mode here.
+//
+// REP_RANGE is deliberately absent: its end is EXCLUSIVE, so echoing it next to a bat that
+// asks for BStart/BLast inclusive invites the reader to mis-read one as the other. The engine
+// prints the scope instead, as "blocks A-B of 0-X", with both ends inclusive like every other
+// range in this repository.
 static void printEnv() {
     static const char* const names[] = {
-        "REP_ORDERS", "REP_ORDER", "REP_LEVEL", "REP_RANGE", "REP_PRECALC",
+        "REP_ORDERS", "REP_ORDER", "REP_LEVEL", "REP_PRECALC",
         "REP_F3COMPLETE", "REP_F3A", "REP_F3START", "REP_F3STOP", "REP_F3LIST",
         "REP_OWNER", "REP_OWNERALL", "REP_PRUNELEVEL", "REP_TYPEMASK", "REP_SGEN",
         "REP_DIAGPRUNE", "REP_PATAPPLY", "REP_PATTERN", "REP_INFO", "REP_WITNESS",

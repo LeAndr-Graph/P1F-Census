@@ -22,8 +22,16 @@ Variable              Value       14 16 18 20  Meaning
 -----------------------------------------------------------------------------------------------
 RESULT                <path>      x  x  x  x   The run's single output file; required, created
                                                fresh, and never appended to.
+ExtPrint              0 | 1       x  x  x  x   How much of the run's own bookkeeping reaches the
+                                               log; 0 (the default) prints the census only.
 REP_PRIORITY          normal      x  x  x  x   Opt out of the below-normal process priority the
                                                engine sets at startup.
+
+At ExtPrint=0 the log is the header, one row per block, and the totals. ExtPrint=1 adds the
+engine's trace lines: SETUP timings, PRECALC list sizes, SHARD and LEVEL branch counts, and the
+per-block branch split. Warnings and errors print at every level -- what ExtPrint gates is volume,
+never meaning. It is the one variable env_reset.bat does NOT clear, because it cannot change what
+a run finds; set it in the shell to trace any case without editing its bat.
 
 
 2. What is searched

@@ -1869,7 +1869,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
     const bool rawShard = (std::getenv("REP_RAWSHARD") != nullptr);
     g_fanOn = (std::getenv("REP_FANOUT") != nullptr);   // [FANOUT] per-depth tree-shape tally, printed with the progress rows
     g_precalc = (std::getenv("REP_PRECALC") != nullptr); // [PRECALC] prototype: list-filtered cover below each seed (block-threading pool)
-    if (g_precalc && m_bPrint) printf("[K20-REP] REP_PRECALC: PROTOTYPE -- precalculated orbit lists below each seed; trivial-stabilizer nodes only (use REP_PRUNELEVEL=1)\n");
+    if (g_precalc && m_bPrint) xprintf("[K20-REP] REP_PRECALC: PROTOTYPE -- precalculated orbit lists below each seed; trivial-stabilizer nodes only (use REP_PRUNELEVEL=1)\n");
     std::set<int> onlyTypes;
     if (const char* env = std::getenv("REP_ONLYTYPES")) {
         for (const char* p = env; *p; ) { int v = atoi(p); if (v > 0) onlyTypes.insert(v); while (*p && *p != ',') p++; while (*p == ',') p++; }
@@ -2078,7 +2078,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
             auto now = std::chrono::steady_clock::now();
             const double s = std::chrono::duration<double>(now - setupT0).count();
             setupT0 = now;
-            printf("[K20-REP]  type %-14s SETUP %-14s %8.1fs  n=%lld\n", tstr, stage, s, n);
+            xprintf("[K20-REP]  type %-14s SETUP %-14s %8.1fs  n=%lld\n", tstr, stage, s, n);
             fflush(stdout);
         };
         if (isV4) buildCentralizerV4(shapes[typeIdx], sh.Calpha, symCap);   // V4 |C| is tiny -> always enumerable
@@ -2438,11 +2438,12 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                 };
                 { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { if (doneRange) break; std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) dfs(orb, rawShard, 1); } }   // rawShard -> trivial descent (skip per-node group dedup)
                 shardHi = shardFront.size();                   // shardFront holds exactly the block [start,end)
-                if (m_bPrint) { printf("[K20-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
+                if (m_bPrint) { xprintf("[K20-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
+                if (m_bPrint && rangeEnd > rangeStart) { printf("  blocks %zu-%zu\n", rangeStart, rangeEnd - 1); fflush(stdout); }
             } else {
                 // COUNT the whole level: parallel level-synchronous build, print per-level branch count.
                 { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) { shardFront.push_back(std::move(orb)); shardTriv.push_back(rawShard ? 1 : 0); } } }   // rawShard -> trivial count (skip per-node group dedup)
-                if (m_bPrint) { printf("[K20-REP]  type %-14s LEVEL 1 branches %zu (%.1fs)\n", tstr, shardFront.size(), elapsed()); fflush(stdout); }
+                if (m_bPrint) { xprintf("[K20-REP]  type %-14s LEVEL 1 branches %zu (%.1fs)\n", tstr, shardFront.size(), elapsed()); fflush(stdout); }
                 for (int lvl = 2; lvl <= shardLevel && !shardFront.empty(); lvl++) {
                     if (lvl == shardLevel) {
                         // FINAL level: COUNT children per parent and SUM -- do NOT store the level, so a
@@ -2456,7 +2457,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                             for (;;) { size_t i = pi.fetch_add(1); if (i >= shardFront.size()) break; std::vector<std::vector<Match>> kids; std::vector<char> kt; w.clearState(); w.commitOrbit(shardFront[i]); w.splitNode(shardTriv[i] != 0, kids, kt); cnt.fetch_add((long long)kids.size(), std::memory_order_relaxed); }
                         });
                         for (auto& th : bp) th.join();
-                        if (m_bPrint) { printf("[K20-REP]  type %-14s LEVEL %d branches %lld (%.1fs, counted -- not stored)\n", tstr, lvl, cnt.load(), elapsed()); fflush(stdout); }
+                        if (m_bPrint) { xprintf("[K20-REP]  type %-14s LEVEL %d branches %lld (%.1fs, counted -- not stored)\n", tstr, lvl, cnt.load(), elapsed()); fflush(stdout); }
                         break;
                     }
                     // intermediate level: build and store (parents for the next level)
@@ -2478,7 +2479,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                     std::vector<std::vector<Match>> nf; std::vector<char> nt;
                     for (size_t i = 0; i < pf.size(); i++) for (size_t k = 0; k < pf[i].size(); k++) { nf.push_back(std::move(pf[i][k])); nt.push_back(pt[i][k]); }
                     shardFront.swap(nf); shardTriv.swap(nt);
-                    if (m_bPrint) { printf("[K20-REP]  type %-14s LEVEL %d branches %zu (%.1fs%s)\n", tstr, lvl, shardFront.size(), elapsed(), par ? ", parallel" : ""); fflush(stdout); }
+                    if (m_bPrint) { xprintf("[K20-REP]  type %-14s LEVEL %d branches %zu (%.1fs%s)\n", tstr, lvl, shardFront.size(), elapsed(), par ? ", parallel" : ""); fflush(stdout); }
                 }
                 shardHi = 0;                                  // count only -> process nothing (the LEVEL lines are the counts)
             }
@@ -2578,7 +2579,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
             size_t lo = 0, hi = reps.size();
             const bool deepShard = (shardLevel > 1);
             if (shardLevel > 0 && m_bPrint) {
-                printf("[K20-REP]  type %-14s LEVEL 1 branches %zu (root reps -- the partition on the enumerable path; the SETUP lines above are where the time went)\n", tstr, reps.size());
+                xprintf("[K20-REP]  type %-14s LEVEL 1 branches %zu (root reps -- the partition on the enumerable path; the SETUP lines above are where the time went)\n", tstr, reps.size());
                 fflush(stdout);
             }
             if (deepShard) {
@@ -2605,7 +2606,8 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                     { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { if (doneRange) break; std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) dfs(orb, rawShard, 1); } }   // rawShard -> trivial descent (skip per-node group dedup)
                     shardHi = shardFront.size();              // shardFront holds exactly the block [start,end)
                     if (chunkStep > 0 && m_bPrint) printf("[K20-REP]  type %-14s REP_RANGE chunked form ignored here -- the slice runs PLAINLY, every branch to completion\n", tstr);
-                    if (m_bPrint) { printf("[K20-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
+                    if (m_bPrint) { xprintf("[K20-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
+                    if (m_bPrint && rangeEnd > rangeStart) { printf("  blocks %zu-%zu\n", rangeStart, rangeEnd - 1); fflush(stdout); }
                 } else {
                     // COUNT the whole level: parallel level-synchronous build, print per-level branch count.
                     { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) { shardFront.push_back(std::move(orb)); shardTriv.push_back(rawShard ? 1 : 0); } } }   // rawShard -> trivial count (skip per-node group dedup)
@@ -2622,7 +2624,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                                 for (;;) { size_t i = pi.fetch_add(1); if (i >= shardFront.size()) break; std::vector<std::vector<Match>> kids; std::vector<char> kt; w.clearState(); w.commitOrbit(shardFront[i]); w.splitNode(shardTriv[i] != 0, kids, kt); cnt.fetch_add((long long)kids.size(), std::memory_order_relaxed); }
                             });
                             for (auto& th : bp) th.join();
-                            if (m_bPrint) { printf("[K20-REP]  type %-14s LEVEL %d branches %lld (%.1fs, counted -- not stored)\n", tstr, lvl, cnt.load(), elapsed()); fflush(stdout); }
+                            if (m_bPrint) { xprintf("[K20-REP]  type %-14s LEVEL %d branches %lld (%.1fs, counted -- not stored)\n", tstr, lvl, cnt.load(), elapsed()); fflush(stdout); }
                             break;
                         }
                         // intermediate level: build and store (parents for the next level)
@@ -2644,7 +2646,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                         std::vector<std::vector<Match>> nf; std::vector<char> nt;
                         for (size_t i = 0; i < pf.size(); i++) for (size_t k = 0; k < pf[i].size(); k++) { nf.push_back(std::move(pf[i][k])); nt.push_back(pt[i][k]); }
                         shardFront.swap(nf); shardTriv.swap(nt);
-                        if (m_bPrint) { printf("[K20-REP]  type %-14s LEVEL %d branches %zu (%.1fs%s)\n", tstr, lvl, shardFront.size(), elapsed(), par ? ", parallel" : ""); fflush(stdout); }
+                        if (m_bPrint) { xprintf("[K20-REP]  type %-14s LEVEL %d branches %zu (%.1fs%s)\n", tstr, lvl, shardFront.size(), elapsed(), par ? ", parallel" : ""); fflush(stdout); }
                     }
                     shardHi = 0;                              // count only -> process nothing (the LEVEL lines are the counts)
                     if (m_bPrint) { printf("[K20-REP]  type %-14s COUNT only (REP_LEVEL set, REP_RANGE unset) -- nothing searched\n", tstr); fflush(stdout); }
@@ -2654,7 +2656,8 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                 lo = (rangeStart < hi) ? rangeStart : hi;
                 if (rangeEnd < hi) hi = rangeEnd;
                 if (hi < lo) hi = lo;
-                if (m_bPrint) { printf("[K20-REP]  type %-14s SHARD range [%zu, %zu) of %zu root reps -> run...\n", tstr, lo, hi, reps.size()); fflush(stdout); }
+                if (m_bPrint) { xprintf("[K20-REP]  type %-14s SHARD range [%zu, %zu) of %zu root reps -> run...\n", tstr, lo, hi, reps.size()); fflush(stdout); }
+                if (m_bPrint && hi > lo) { printf("  blocks %zu-%zu of 0-%zu\n", lo, hi - 1, reps.size() - 1); fflush(stdout); }
             } else if (shardLevel > 0) {
                 hi = lo;                                  // COUNT mode: the LEVEL line is the answer; search nothing
                 if (m_bPrint) { printf("[K20-REP]  type %-14s COUNT only (REP_LEVEL set, REP_RANGE unset) -- nothing searched\n", tstr); fflush(stdout); }
@@ -2713,7 +2716,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                                 if (!orb.root) {             // a seed: build its list once; every entry is admissible at the seed
                                     auto tL = std::chrono::steady_clock::now();
                                     orb.root = w.buildOrbList();
-                                    if (m_bPrint) { std::lock_guard<std::mutex> lk(g_print_mtx); printf("[K20-REP]  type %-14s PRECALC: seed list %zu orbits (%.1fs)\n", tstr, orb.root->ent.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count()); fflush(stdout); }
+                                    if (m_bPrint) { std::lock_guard<std::mutex> lk(g_print_mtx); xprintf("[K20-REP]  type %-14s PRECALC: seed list %zu orbits (%.1fs)\n", tstr, orb.root->ent.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count()); fflush(stdout); }
                                 }
                                 w.splitNodeL(orb, kids, kidsTriv, kidsOrb);
                             } else w.splitNode(task.second != 0, kids, kidsTriv);
@@ -2772,11 +2775,11 @@ void K20A2::runRepresentativeMethod(int order, int target) {
                     if (g_precalc) {
                         auto tL = std::chrono::steady_clock::now();
                         seedOrb.root = seedW.buildOrbList();
-                        if (m_bPrint) { printf("[K20-REP]  type %-14s PRECALC: seed list %zu orbits (%.1fs)\n", tstr, seedOrb.root->ent.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count()); fflush(stdout); }
+                        if (m_bPrint) { xprintf("[K20-REP]  type %-14s PRECALC: seed list %zu orbits (%.1fs)\n", tstr, seedOrb.root->ent.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count()); fflush(stdout); }
                         seedW.splitNodeL(seedOrb, front, frontTriv, frontOrb);
                     } else seedW.splitNode(false, front, frontTriv);
                     g_reps_total.store((long long)front.size());
-                    if (m_bPrint) { printf("[K20-REP]  type %-14s BLOCK %zu: %zu branches -> %d threads, next branch in sequence\n", tstr, bi, front.size(), nThreads); fflush(stdout); }
+                    if (m_bPrint) { xprintf("[K20-REP]  type %-14s BLOCK %zu: %zu branches -> %d threads, next branch in sequence\n", tstr, bi, front.size(), nThreads); fflush(stdout); }
                     std::atomic<size_t> bidx{ 0 };
                     std::vector<std::thread> bpool;
                     for (int t = 0; t < nThreads; t++) {

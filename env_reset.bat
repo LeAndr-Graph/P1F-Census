@@ -7,6 +7,10 @@ REM  rather than quietly change it -- either way the case must not see it.  Call
 REM  it lands in the caller's setlocal scope) at the top of every runs/ and regression/
 REM  case bat: a leftover REP_* in the shell would silently change what the case searches,
 REM  and the regression compare is byte-exact.
+REM
+REM  ExtPrint is deliberately NOT cleared.  It sets how much of the run's own bookkeeping
+REM  reaches the log and cannot change what a run finds, so leaving it alone lets you trace
+REM  any case with  SET ExtPrint=1  in the shell, without editing the case bat.
 REM ============================================================================
 for %%V in (
   REP_BLOCKDUMP REP_BLOCKSFOR REP_CANDCAP REP_CANONCOUNT REP_CANONDIAG REP_CANONKEY

@@ -9,12 +9,7 @@ REM
 REM  BLOCK SIZE: block 0 is 6.62e10 nodes and 13,616 classes.  Blocks are uneven,
 REM  and this is one sample of the 104.
 REM
-REM  It took 17.1 hours on 30 threads on 2026-09-08, but do NOT plan against that:
-REM  the work queue in use then left 28 of 30 threads spinning and the run spent
-REM  most of its life at a fifteenth of its own peak rate.  That queue was replaced
-REM  on 2026-09-09 -- each thread now takes the next branch of the block in sequence
-REM  -- and the same nodes at the peak rate would be about 1.9 hours.  No block has
-REM  been run end to end since, so time one before scheduling the other 103.
+REM  Expected time on a 32-core PC: about 1.5 hours per block, 6.5 days for all 104.
 REM
 REM  TO CHOOSE THE INTERVAL OF BLOCKS TO PROCESS, edit BStart and BLast below.
 REM  Both are inclusive and counted from 0: BStart=5 BLast=6 runs blocks 5 and
