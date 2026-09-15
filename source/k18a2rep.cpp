@@ -4550,7 +4550,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 }
                 shardHi = shardFront.size();                   // shardFront holds exactly the block [start,end)
                 if (m_bPrint) { xprintf("[K18-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
-                if (m_bPrint && rangeEnd > rangeStart) { printf("  blocks %zu-%zu\n", rangeStart, rangeEnd - 1); fflush(stdout); }
+                if (m_bPrint && rangeEnd > rangeStart) { std::string ts(tstr); while (!ts.empty() && ts.back() == ' ') ts.pop_back(); printf("  blocks %zu-%zu, type %s\n", rangeStart, rangeEnd - 1, ts.c_str()); fflush(stdout); }
                 // [PATHCANON] canonicalize each block's PATH with canonV_fast: report how many DISTINCT
                 // C(sigma0)-canonical level-L prefixes the range holds, and how many blocks are SELF-canonical
                 // (their path IS the C(sigma0)-minimum = the canonical representative). Then skip completion.
@@ -4740,7 +4740,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     shardHi = shardFront.size();              // shardFront holds exactly the block [start,end)
                     if (chunkStep > 0 && m_bPrint) printf("[K18-REP]  type %-14s REP_RANGE chunked form ignored here -- the slice runs PLAINLY, every branch to completion\n", tstr);
                     if (m_bPrint) { xprintf("[K18-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
-                    if (m_bPrint && rangeEnd > rangeStart) { printf("  blocks %zu-%zu\n", rangeStart, rangeEnd - 1); fflush(stdout); }
+                    if (m_bPrint && rangeEnd > rangeStart) { std::string ts(tstr); while (!ts.empty() && ts.back() == ' ') ts.pop_back(); printf("  blocks %zu-%zu, type %s\n", rangeStart, rangeEnd - 1, ts.c_str()); fflush(stdout); }
                 } else {
                     // COUNT the whole level: parallel level-synchronous build, print per-level branch count.
                     { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) { shardFront.push_back(std::move(orb)); shardTriv.push_back(rawShard ? 1 : 0); } } }   // rawShard -> trivial count (skip per-node group dedup)
@@ -4790,7 +4790,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 if (rangeEnd < hi) hi = rangeEnd;
                 if (hi < lo) hi = lo;
                 if (m_bPrint) { xprintf("[K18-REP]  type %-14s SHARD range [%zu, %zu) of %zu root reps -> run...\n", tstr, lo, hi, reps.size()); fflush(stdout); }
-                if (m_bPrint && hi > lo) { printf("  blocks %zu-%zu of 0-%zu\n", lo, hi - 1, reps.size() - 1); fflush(stdout); }
+                if (m_bPrint && hi > lo) { std::string ts(tstr); while (!ts.empty() && ts.back() == ' ') ts.pop_back(); printf("  blocks %zu-%zu of 0-%zu, type %s\n", lo, hi - 1, reps.size() - 1, ts.c_str()); fflush(stdout); }
             } else if (shardLevel > 0) {
                 hi = lo;                                  // COUNT mode: the LEVEL line is the answer; search nothing
                 if (m_bPrint) { printf("[K18-REP]  type %-14s COUNT only (REP_LEVEL set, REP_RANGE unset) -- nothing searched\n", tstr); fflush(stdout); }
