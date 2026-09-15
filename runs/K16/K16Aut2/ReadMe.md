@@ -7,14 +7,18 @@ The 59 are every K16 class whose group is exactly order 2. The sixtieth has `|Au
 and is reached here because 14 is even; it is the only even group order K16 has above 2,
 and `K16Aut3-All` finds it too, by its order-7 leg.
 
-**With `K16Aut3-All` this is the whole of K16.** That case gives the 30 classes with
-`|Aut| > 2`, `{3:19, 5:5, 7:4, 14:1, 15:1}`; this one gives the 59 with `|Aut| = 2`.
-59 + 30 = **89**, the published K16 total. Neither case alone is the full classification.
+**With `K16Aut3-All` this is the whole of the K16 non-rigid classification.** That case gives
+the 30 classes with `|Aut| > 2`, `{3:19, 5:5, 7:4, 14:1, 15:1}`; this one gives the 59 with
+`|Aut| = 2`. 59 + 30 = **89**, the published number of K16 classes whose automorphism group is
+non-trivial. Neither case alone is that classification.
 
 Their union is `AllResults/K16_P1F_aut_gt1.txt`, built 2026-09-01 and the catalog both cases
-are now checked against: 89 classes, `{2:59, 3:19, 5:5, 7:4, 14:1, 15:1}`. Since 89 is also the
-published count of *all* perfect one-factorizations of K16, that file is the complete K16
-census, and K16 has no class with a trivial automorphism group.
+are now checked against: 89 classes, `{2:59, 3:19, 5:5, 7:4, 14:1, 15:1}`.
+
+That file is **not** a census of all P1Fs of K16. K16 has 3,155 classes up to isomorphism, so
+the 3,066 whose automorphism group is trivial are outside it -- and outside every case in this
+repository. The representative method starts from an assumed automorphism, so a factorization
+that has none is unreachable by it, at any size.
 
 ## The 60 limit, and what it buys
 
@@ -115,7 +119,7 @@ wrote a known class under a different group order, and it fails the bat with exi
 first run, on 2026-09-01. So Compare is a reproducibility test of later runs against that one;
 it is not independent evidence that the original 60 were right. What supports those is the
 untargeted run that found exactly 60 and stopped, and the arithmetic that 59 + 30 = 89 matches
-the published K16 total.
+the published number of K16 classes with a non-trivial automorphism group.
 
 Until 2026-09-01 the K16 catalog was `K16_P1F_aut_gt2.txt`, scope `|Aut| > 2`, and this case
 could not be checked at all: 59 of its 60 classes were outside it.

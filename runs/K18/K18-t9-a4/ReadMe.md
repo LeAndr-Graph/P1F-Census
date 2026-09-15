@@ -1,7 +1,10 @@
 # K18-t9-a4 -- what this case computes
 
 One-factorizations of K18 whose full symmetry group has order 2, whose symmetry is
-fixed-point-free, and which fall in branch a = 4.
+fixed-point-free, and which fall in branch a = 4. A full sweep gives 5 classes.
+
+With K18-t8-a0's 9,447, K18-t9-a0's 727 and K18Aut3-All's 531 that is the whole K18
+classification: 9,447 + 727 + 5 + 531 = 10,710.
 
 The log is a progress report and nothing else. Everything that explains the words on it
 is here. Anything more specific than this is in the source.
@@ -130,12 +133,13 @@ have produced and did not: that needs the block each class belongs to and a read
 A Fault means the run wrote something the catalog does not have, or wrote a known class under a
 different group order, and it fails the bat with exit code 3.
 
-On this leg the first of those two is not necessarily an error. This is the one open stratum of
-the classification, so a class the catalog does not have is a NEW class and the point of the
-sweep. The report distinguishes the two: a class the catalog has never seen is counted under
-`not present`, while a known class recorded under a different group order is named on its own
-line. A discovery still fails the bat, deliberately, because it means the catalog is out of date
-and somebody has to look.
+This was the last stratum of the classification to close. It was swept end to end and added no
+class the other legs had not already found, which is what makes the catalog's 10,710 a complete
+census of `|Aut| > 1` rather than a running total. A class the catalog does not have would
+therefore be a genuine surprise here, not a routine discovery. The report distinguishes the two
+kinds of Fault: a class the catalog has never seen is counted under `not present`, while a known
+class recorded under a different group order is named on its own line. Either fails the bat,
+deliberately, because either means the catalog and the engine disagree and somebody has to look.
 
 ## Changing the thread count
 
