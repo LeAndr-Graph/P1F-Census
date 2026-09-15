@@ -69,13 +69,21 @@ how long it takes. Run one by executing its `run.bat` — nothing else needs con
 | `runs/K20/K20Aut4-All` | the K20 \|Aut\| > 3 classification, by group size |
 | `runs/K20/K20Aut4-NoSkip` | the same result re-derived by search instead of by theorem |
 | `runs/K20/K20Aut3` | the K20 order-3 cell, swept in 104 independent blocks |
-| `runs/K20/K20Aut2`, `K20Aut2-Shard`, `K20Aut2-Dive` | three approaches to the K20 order-2 leg |
 
 Runtimes span seconds to days; the K18 \|Aut\| = 2 strata and the K20 order-3 cell are the long
 ones, and both are designed to be split across machines. Read the case's `ReadMe.md` first.
 
 A case ends by comparing what it found against the catalogue, so a successful run prints
 `Compare Ok` and a table of the classes by |Aut|.
+
+### What is not here
+
+Whether K20 has a perfect 1-factorization with automorphism group of order exactly 2 is open, and
+no case here searches for one. Three strategies were tried and all returned nothing: a plain sweep
+of the `2^9 1^2` cell, the same cell partitioned into 7,944 level-2 shards, and randomized
+backtracking dives. The result is weak evidence at best, because the fraction of the space those
+runs covered is unknown and cannot be measured with these tools: the tree-size estimator supports
+only the enumerable path, and every order-2 type at K20 is over-cap by construction.
 
 ### Overriding paths
 
