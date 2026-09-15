@@ -1,4 +1,4 @@
-// P1F-Census support -- the one symbol the moved engines need from the utility side:
+// p1f support -- the one symbol the moved engines need from the utility side:
 // printWithPowers. The four rep engines forward-declare the function themselves, so no
 // header is needed.
 //
@@ -13,7 +13,7 @@
 // OEM code page and re-encodes the result, and `⁹` (E2 81 B9) lands in the log as
 // CE 93 C3 BC E2 95 A3. Measured, not assumed: change one of the two and you must change both.
 //
-// `g_useColors` went with it. This function was its only reader in P1F-Census, nothing here colors
+// `g_useColors` went with it. This function was its only reader in p1f, nothing here colors
 // anything, and a flag named for colors that in fact controlled superscripts was a trap.
 #include <string>
 #include <cctype>

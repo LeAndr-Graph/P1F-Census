@@ -36,7 +36,7 @@
 
 #include "k14a2.h"
 #include "cgtEngine.h"   // shared computational-group-theory engine (BSGS, edgeStabGens, setwiseStab)
-#include "logTable.h"   // the run log IS a table -- one writer for all four engines
+#include "logTable.h"   // the run log IS a table -- one writer for all four engines (docs/log_table_spec.md)
 #include <cstdint>
 #include <intrin.h>   // _BitScanForward (genM bitmask candidate iteration)
 #include <random>     // std::mt19937 (REP_ESTIMATE Knuth tree-size probes)
@@ -262,7 +262,7 @@ inline void canonV_fast(const std::vector<Match>& chosen, const uint8_t* alpha, 
     rec(0);
 }
 
-// [BLOCK] ported verbatim from k18a2rep.cpp
+// [BLOCK] ported verbatim from k18a2rep.cpp -- see docs/TBD.md
 inline long long matchRank(const Match& F) {
     static const long long DF[] = { 1,1,3,15,105,945,10395,135135,2027025,34459425 };  // (2k-1)!! for k=0..9
     bool used[N] = { false }; long long rank = 0;
@@ -572,7 +572,7 @@ inline void fanPrint() {
     fflush(stdout);
 }
 
-// [PRECALC] REP_PRECALC=1 -- PROTOTYPE. Enumerable
+// [PRECALC] REP_PRECALC=1 -- PROTOTYPE (docs/k20_order3_triple_lists_spec.md). Enumerable
 // block-threading pool only, trivial-stabilizer nodes only (REP_PRUNELEVEL=1 makes every node
 // below a seed trivial). The sigma-orbits admissible below a seed are enumerated
 // ONCE into a list; every node below inherits its parent's index list filtered by the orbit
@@ -664,7 +664,7 @@ bool g_noClosurePrune = false;        // sibling of k18a2rep REP_NOPRUNE (always
 long long g_last_print_nodes = 0;     // g_nodes at the previous progress line (for the rate)
 int  g_order = 0, g_typeIdx = 0, g_numTypes = 0;    // current order, current cycle type 1/N
 
-// [BLOCK] ported verbatim from k18a2rep.cpp
+// [BLOCK] ported verbatim from k18a2rep.cpp -- see docs/TBD.md
 std::atomic<int> g_maxDepth{ 0 };     // diagnostic (observational only): deepest partial cover reached in the current block; printed by F3COMPLETE/NAVIGATE, never read by the search
 std::atomic<long long> g_maxKids{ 0 };              // [DIAG] max children materialized by one splitNode call (completeBlockF3 memory probe)
 std::atomic<long long> g_maxNQ{ 0 };               // [DIAG] max completeBlockF3 work-queue size reached (memory probe)
@@ -895,7 +895,7 @@ static long long ownerOf(const std::vector<Match>& cover) {
 
 // The two identity cells of a column-set-A row: what printSubset() used to print as
 // [SUBSET].  Wording is unchanged; only the
-// destination changed -- these are table cells now.
+// destination changed -- these are table cells now.  See docs/log_table_spec.md 3.
 static void subsetCells(int order, bool isV4, bool isE9, bool isS3, const char* tstr,
                         std::string& symmetry, std::string& type)
 {
@@ -914,7 +914,7 @@ static void subsetCells(int order, bool isV4, bool isE9, bool isS3, const char* 
     type = t;
 }
 
-// ---- the run's ONE table --------------------------------------------
+// ---- the run's ONE table (docs/log_table_spec.md 2) --------------------------------------------
 // Column set A.  Widths are minimums; Saved is last
 // and so is never padded, which is why its histogram may run as wide as it needs to.
 static const LogCol kColsA[] = {
@@ -941,7 +941,7 @@ static LogTable* g_tbl = nullptr;
 // Run totals for the ~ and = rows.  The = row is the SUM of the rows printed above it, so
 // every one of these is accumulated at the point its per-unit value is computed -- never
 // re-derived from a separate clock or counter, which is how the old log came to print two
-// different numbers for one quantity.
+// different numbers for one quantity.  docs/log_table_spec.md 0, 2c.
 static std::map<int, int> g_runSavedAut;    // |Aut| -> classes written by the RUN
 static std::map<int, int> g_runDupAut;      // |Aut| -> duplicates rejected by the RUN
 static long long g_runFound  = 0;           // distinct classes found by the RUN   (Results)
@@ -1288,7 +1288,7 @@ struct RepWorker {
         g_blockCovers.fetch_add(1, std::memory_order_relaxed);   // raw complete-cover count for the per-block estimate log
         std::string key = canonKey(chosen);          // labeling-independent class key (sets lastAut = 2*|Aut|)
 
-        // [BLOCK/OWNER + AUT2ONLY] ported verbatim from k18a2rep.cpp
+        // [BLOCK/OWNER + AUT2ONLY] ported verbatim from k18a2rep.cpp -- see docs/TBD.md
         //
         //   1. the SAME-BLOCK repeat. This block already yielded this class -- e.g. block
         //      4.0.17607 reaches class #2 by two different covers. Both have the same owner,
@@ -2019,7 +2019,7 @@ struct RepWorker {
     }
 
     // [PRECALC] local recursion (used when the shared queue is full), same tree as splitNodeL.
-    //
+    // docs/log_table_spec.md 0, 2c, 2d.
     // [TUNE 2026-09-07] This is where the nodes are: the pool expands ONE level per queue item and
     // drains whole subtrees here once the queue is at QCAP, so nearly every node in the run is a
     // coverLocal call. The old version went through splitNodeL and therefore paid, per node, a
@@ -2029,7 +2029,7 @@ struct RepWorker {
     // already sitting in ce.rows. None of that is needed on a depth-first path: the parent's list
     // stays alive on the stack for the whole subtree, so it can live in a per-thread buffer indexed
     // by recursion depth, and the child can be committed straight from the entry.
-    //
+    // docs/log_table_spec.md 0, 2c, 2d.
     // The tree is UNCHANGED: same nodes++ per node, same anchor, same candidate order, same emit.
     std::vector<NodeList> orbBuf;     // one reusable admissible-list per recursion depth
 
@@ -2448,7 +2448,7 @@ void enumShapesS3(std::vector<GrpShape>& out) {
 // deduplicates them, forwards each distinct class to resultCallback, and prints a
 // summary (only when m_bPrint). Worker count = kThreads.
 // =============================================================================
-// The table's LAST row.  It is emitted here, not at the end of
+// The table's LAST row (docs/log_table_spec.md 2c).  It is emitted here, not at the end of
 // runRepresentativeMethod, because that function runs once per REP_ORDERS token while the table
 // spans the whole run -- printing a TOTAL per token would be six totals and no total.
 // Every figure is the per-unit accumulation of the rows above, so the = row is exactly their sum;
@@ -2563,7 +2563,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
     g_target = target; g_stop.store(false); g_harvest.clear(); g_banked.store(0); g_f1.store(0); g_f2.store(0);   // harvest mode (target>0 -> stop after `target` classes)
     // Live result emission: every globally-new class goes straight to the normal result
     // pipeline (mutex-serialized in emit()); a long or killed run keeps everything sent.
-    g_sendResult = [this](const unsigned char* s, int aut) { if (resultCallback) resultCallback(cbClass, s, aut, 1, 2); };   // |Aut| rides the callback's free r4 slot
+    g_sendResult = [this](const unsigned char* s, int aut) { if (resultCallback) resultCallback(cbClass, s, aut, 1, 2); };   // |Aut| rides the callback's free r4 slot (docs/owner_filter_spec.md 6.7)
     g_t0 = std::chrono::steady_clock::now();
     g_f17Total.store(0); g_f17NextSec.store(60); { std::lock_guard<std::mutex> lk(g_f17_mtx); g_f17Hist.clear(); }   // [DIAG] REP_F17DUMP reset
     g_last_print = g_t0;
@@ -2582,7 +2582,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
     std::vector<GrpShape> gshapes;                  // E9/S3: fully-constructed group shapes
     if (isV4) enumShapesV4(shapes); else if (isE9) enumShapesE9(gshapes); else if (isS3) enumShapesS3(gshapes); else enumTypes(order, types);
     g_numTypes = (int)(isV4 ? shapes.size() : isGrp ? gshapes.size() : types.size());
-    // The run's ONE table.  runRepresentativeMethod is called once
+    // The run's ONE table (docs/log_table_spec.md 2a).  runRepresentativeMethod is called once
     // per REP_ORDERS token, so this is guarded: the title, and the first column-name row, are
     // printed by the FIRST token and every later token adds rows to the same table.  The block
     // driver builds its own table (column set B) and is excluded here.
@@ -2795,7 +2795,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
             // one core (cover() has no fan-out; splitNode does). splitNode needs the root BSGS,
             // which otherwise only the over-cap setup builds -- so build it here, by exactly the
             // calls that setup uses. Also built for REP_LEVEL > 1, whose level-L frontier is
-            // expanded by splitNode on this path too.
+            // expanded by splitNode on this path too (docs/k20_order3_level_partition_spec.md).
             // Without either, none of this is built and nothing changes.
             if (rangeMode || shardLevel > 1) {
                 if (isE9 || isS3) {
@@ -2840,7 +2840,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
         // then enumerate the level-3 factor orbits: RAW (orbitKey-deduped, what childReps returns)
         // and CANONICAL (further deduped by canonV_fast on the whole committed prefix, which is the
         // real 1-D search size of a block-driven census).  Counting only -- nothing is completed and
-        // no result is written, so this cannot perturb the ordinary legs."Order of
+        // no result is written, so this cannot perturb the ordinary legs.  docs/TBD.md "Order of
         // work" step 1: read the block count first, and only then decide whether to port completion.
         if (std::getenv("REP_F3COUNT")) {
             RepWorker dw; dw.sh = &sh; dw.clearState();
@@ -2888,7 +2888,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
             // The range is stated by its ENDS -- the two numbers the log prints, and the same numbers a
             // resume value is read off. REP_F3STOP is the LAST raw block c, INCLUSIVE, not a count.
             // Everything below still works in a count, so the count is derived here and nowhere else.
-            // (The old REP_F3MAX is refused by checkRemovedEnv() in P1F-Census.cpp: reading a count as a stop
+            // (The old REP_F3MAX is refused by checkRemovedEnv() in p1f.cpp: reading a count as a stop
             // would silently run the wrong range.)
             const long long f3stop  = std::getenv("REP_F3STOP")  ? atoll(std::getenv("REP_F3STOP"))  : -1;  // last RAW block c, inclusive (unset = to the end of the column)
             const long long f3max   = f3stop < 0 ? -1 : (f3stop < f3start ? 0 : f3stop - f3start + 1);      // # RAW blocks from F3START; a stop below the start asks for nothing
@@ -2975,7 +2975,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
                 // half is what was ASKED for, so a stop beyond the last block shows up as a difference
                 // between them instead of passing unnoticed. Printed for every block-driven run, owner
                 // filter or not: it is the denominator every later per-block line is read against.
-                // [TABLE] Column set B.  Exactly ONE subset per run here, so
+                // [TABLE] Column set B (docs/log_table_spec.md 4).  Exactly ONE subset per run here, so
                 // the subset is the TITLE, not a column: it carries what [SUBSET] carried, and the range
                 // caption above, unchanged wording, sits under it, so
                 // both are handed to LogTable as one two-line title.  Done%'s denominator is the raw
@@ -3103,7 +3103,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
                 // block and are skipped. No "last block" is reported: it would be the last COMPLETED
                 // one, which stalls short of the true end whenever the range closes on skipped blocks.
                 // The two [F3COMPLETE] DONE: lines are REPLACED by the = row, which already carries
-                // saved and duplicates in the same columns every block row used.
+                // saved and duplicates in the same columns every block row used (docs/log_table_spec.md 4).
                 // Only the facts with no column survive, as footnotes under the table: how many blocks in
                 // the range were canonical -- the rest are relabelings of an earlier block and are skipped
                 // -- and the |Aut| > 2 rejection histogram. No "last block" is reported: it would be the
@@ -3157,7 +3157,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
 
         // 3. fan the representative tasks out across kThreads workers; each subtree breaks
         //    symmetry with only its orbit's stabilizer.
-        // [SUBSET] is gone: column set A puts its two facts in the Symmetry and Type columns, and the block driver puts them in the table title
+        // [SUBSET] is gone: column set A puts its two facts in the Symmetry and Type columns, and the block driver puts them in the table title (docs/log_table_spec.md 2a, 3)
         size_t before = gcanon.size();   // classes known before this type
         const long long dupBefore = g_crossDup.load(std::memory_order_relaxed);   // duplicates before this type
         { std::lock_guard<std::mutex> lk(g_harvest_mtx); g_savedAut.clear(); g_crossDupAut.clear(); }   // per-leg |Aut| histograms: what this leg wrote, and what it rejected
@@ -3554,7 +3554,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
             // counts, search nothing) and RANGE (lazy in-order DFS to depth L keeping only the
             // branches in [start,end), then the block-threading pool below). Level-L indices
             // are DFS order over (rep index, child order), so slices compose exactly, as on the
-            // over-cap path.
+            // over-cap path. Spec: docs/k20_order3_level_partition_spec.md.
             size_t lo = 0, hi = reps.size();
             const bool deepShard = (shardLevel > 1);
             if (shardLevel > 0 && m_bPrint) {
@@ -3816,7 +3816,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
             // what was WRITTEN and what was REJECTED, so the rows' Saved histograms sum to the census.
             const long long dups  = g_crossDup.load(std::memory_order_relaxed) - dupBefore;
             const long long found = (long long)(gcanon.size() - before);
-            // One ROW per leg.  The blank marker says the numbers are
+            // One ROW per leg (docs/log_table_spec.md 3).  The blank marker says the numbers are
             // this leg's own; the run totals it feeds are what the ~ and = rows report.  A leg that
             // was never entered is one row with `skipped` in Elapsed and the rest blank.
             g_runFound += found; g_runSaved += found - dups; g_runDups += dups; g_runNodes += typeNodes; g_runSec += tsec;

@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# to_result_format.pl -- rewrite a class file into exactly what a P1F-Census run writes.
+# to_result_format.pl -- rewrite a class file into exactly what a p1f run writes.
 #
 #   perl tools/to_result_format.pl <file> [<file> ...]
 #

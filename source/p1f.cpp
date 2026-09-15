@@ -1,4 +1,4 @@
-// P1F-Census -- standalone driver for the |Aut|>1 representative-method engines.
+// p1f -- standalone driver for the |Aut|>1 representative-method engines.
 //
 // The engines (k14a2rep.cpp, k16A2rep.cpp, k18a2rep.cpp, k20a2rep.cpp) sit behind a
 // deliberately small interface. Everything they need is: a FactorParams, a thread count, a fixed-row
@@ -6,10 +6,10 @@
 // in any of the five rep sources), and a result callback. All run configuration is read by the engines
 // themselves from REP_* environment variables, exactly as before.
 //
-//   P1F-Census.exe [N] [kThreads]      N = 14 | 16 | 18 | 20; defaults N=18, kThreads=10
+//   p1f.exe [N] [kThreads]      N = 14 | 16 | 18 | 20; defaults N=18, kThreads=10
 //   RESULT=<path>                the run's ONE output file -- required, never appended to
 //
-// A P1F-Census run has exactly one result output, in one format, whatever the mode and whatever N.
+// A p1f run has exactly one result output, in one format, whatever the mode and whatever N.
 // REP_PRELOAD, REP_INFO and KNA2_RESULT are GONE: the first read a
 // baseline of previously-found classes, the other two were second outputs in internal formats. So
 // are REP_F3CAP, REP_F3L4 and REP_CANDCAP, which each let a block return less than it holds and so
@@ -29,7 +29,7 @@
 #include <string>
 #include <io.h>
 #include <windows.h>
-#include <sys/stat.h>   // _stat -- the .exe's mtime is the build stamp
+#include <sys/stat.h>   // _stat -- the .exe's mtime is the build stamp (docs/log_table_spec.md 1a)
 #include <ctime>
 
 // ---- fixed rows -------------------------------------------------------------------------------
@@ -62,7 +62,7 @@ static void buildFixedRows(int np, int nFixed, unsigned char* out) {
 //    ...
 //
 // `aut` is the real automorphism order, delivered through the callback's r4 slot -- the engines set
-// it from canonKey()'s lastAut. The old P-file header printed 0
+// it from canonKey()'s lastAut (docs/owner_filter_spec.md 6.7). The old P-file header printed 0
 // because |Aut| never reached this callback at all.
 //
 // `seq` counts write order in THIS file only. It is not a class identifier: records land in thread
@@ -99,9 +99,9 @@ static bool saveResult(void* /*cbClass*/, const unsigned char* results, int aut,
 // is a census.
 static bool checkRemovedEnv() {
     static const char* const removed[][2] = {
-        { "REP_PRELOAD",  "class baselines are gone -- ownership dedups statelessly" },
-        { "REP_INFO",     "replaced by RESULT" },
-        { "KNA2_RESULT",  "replaced by RESULT" },
+        { "REP_PRELOAD",  "class baselines are gone -- ownership dedups statelessly (owner_filter_spec.md 3)" },
+        { "REP_INFO",     "replaced by RESULT (owner_filter_spec.md 7.2)" },
+        { "KNA2_RESULT",  "replaced by RESULT (owner_filter_spec.md 7.2)" },
         { "REP_F3CAP",    "per-block time cap -- a truncated block can miss the cover it OWNS, and no other block writes it: silent class loss" },
         { "REP_F3L4",     "level-4 block sharding -- both shards of a block believe they are block c, so both write its owned class" },
         { "REP_CANDCAP",  "biased genM candidate subset -- never a census, same silent-loss mode as a time cap" },
@@ -110,8 +110,8 @@ static bool checkRemovedEnv() {
     };
     bool bad = false;
     for (const auto& r : removed)
-        if (std::getenv(r[0])) { printf("P1F-Census: %s is no longer supported in P1F-Census -- %s\n", r[0], r[1]); bad = true; }
-    if (bad) printf("P1F-Census: unset the variable(s) above and re-run -- stop\n");
+        if (std::getenv(r[0])) { printf("P1F: %s is no longer supported -- %s\n", r[0], r[1]); bad = true; }
+    if (bad) printf("P1F: unset the variable(s) above and re-run -- stop\n");
     return !bad;
 }
 
@@ -133,7 +133,7 @@ static bool checkOwnerEnv(int np) {
     if (!owner && !ownerAll) return true;
     const char* name = owner ? "REP_OWNER" : "REP_OWNERALL";
     if (np != 18) {
-        printf("P1F-Census: %s is k18-only, and N=%d was requested.\n"
+        printf("P1F: %s is k18-only, and N=%d was requested.\n"
                "      Ownership is the minimum BLOCK index over a class's column labelings, and only\n"
                "      k18 has blocks (the a.b.c coordinate and the REP_F3COMPLETE driver). With no\n"
                "      column there is nothing to own, so this run would NOT be shard-disjoint however\n"
@@ -141,7 +141,7 @@ static bool checkOwnerEnv(int np) {
         return false;
     }
     if (!std::getenv("REP_F3COMPLETE")) {
-        printf("P1F-Census: %s needs REP_F3COMPLETE.\n"
+        printf("P1F: %s needs REP_F3COMPLETE.\n"
                "      Ownership is defined against a block column; without the block driver there is\n"
                "      no column, no block index and nothing to own -- stop\n", name);
         return false;
@@ -151,7 +151,7 @@ static bool checkOwnerEnv(int np) {
 
 // The build stamp is the running executable's OWN modification time. __DATE__/__TIME__ is the
 // compile time of one translation unit, and goes stale the moment that unit is not recompiled
-// while the binary is -- which is the failure it was there to prevent.
+// while the binary is -- which is the failure it was there to prevent. See docs/log_table_spec.md 1a.
 static const char* buildStamp() {
     static char s[32] = "";
     if (*s) return s;
@@ -169,7 +169,7 @@ static const char* buildStamp() {
 // Wall-clock time the process started. The table's Elapsed column is relative, so two logs cannot
 // be laid over each other without knowing where each one begins -- which is exactly what a
 // staggered set of runs (start one every half hour) needs in order to be compared at equal machine
-// load. Read once, on the first call, before any work starts.
+// load. Read once, on the first call, before any work starts. See docs/log_table_spec.md 1d.
 static const char* startStamp() {
     static char s[32] = "";
     if (*s) return s;
@@ -185,7 +185,7 @@ static const char* startStamp() {
 // constantly -- 8 threads against 30, this laptop against the 32-core box -- and a log that does
 // not name its host can only be placed by guesswork. One 10-thread K18 log cost exactly that on
 // 2026-09-09, read alongside runs from another machine before anyone noticed it said nothing about
-// where it came from.
+// where it came from. See docs/log_table_spec.md 1d.
 static const char* hostName() {
     static char s[64] = "";
     if (*s) return s;
@@ -196,7 +196,7 @@ static const char* hostName() {
 
 // Every REP_* variable actually set, on one line. A run whose log does not state its own knobs
 // cannot be reproduced from the log, and env_reset.bat exists because a leftover knob
-// silently changing a run is a real failure mode here.
+// silently changing a run is a real failure mode here. See docs/log_table_spec.md 1c.
 //
 // REP_RANGE is deliberately absent: its end is EXCLUSIVE, so echoing it next to a bat that
 // asks for BStart/BLast inclusive invites the reader to mis-read one as the other. The engine
@@ -218,7 +218,7 @@ static void printEnv() {
         if (!line.empty()) line += "  ";
         line += names[i]; line += "="; line += v;
     }
-    if (!line.empty()) printf("P1F-Census: Requested %s\n", line.c_str());
+    if (!line.empty()) printf("P1F: Requested %s\n", line.c_str());
 }
 
 int main(int argc, const char* argv[]) {
@@ -228,7 +228,7 @@ int main(int argc, const char* argv[]) {
     // removed (see the note below), and those are multi-byte UTF-8. Without this the console stays
     // on the machine's OEM codepage and every superscript arrives as mojibake. The runs\ bats never
     // showed it because they pipe stdout through a PowerShell UTF-8 StreamWriter into the .log, so
-    // only someone running P1F-Census.exe straight from a prompt saw the damage. This affects the CONSOLE
+    // only someone running p1f.exe straight from a prompt saw the damage. This affects the CONSOLE
     // only: the bytes written to a redirected file are the same either way, so no existing log,
     // result file or regression compare changes.
     SetConsoleOutputCP(CP_UTF8);
@@ -242,9 +242,9 @@ int main(int argc, const char* argv[]) {
         const bool normalPri = (pr && (!strcmp(pr, "normal") || !strcmp(pr, "NORMAL")));
         if (!normalPri) {
             if (SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS))
-                printf("P1F-Census: process priority BELOW NORMAL (REP_PRIORITY=normal to opt out)\n");
+                printf("P1F: process priority BELOW NORMAL (REP_PRIORITY=normal to opt out)\n");
             else
-                printf("P1F-Census: could not lower process priority (error %lu) -- running at the default\n", GetLastError());
+                printf("P1F: could not lower process priority (error %lu) -- running at the default\n", GetLastError());
         }
     }
     // g_useColors is gone (2026-08-30). It gated the type string's superscripts on
@@ -256,15 +256,15 @@ int main(int argc, const char* argv[]) {
     if (!checkRemovedEnv()) return 1;
     if (!checkOwnerEnv(np)) return 1;
     const char* resPath = std::getenv("RESULT");
-    if (!resPath || !*resPath) { printf("P1F-Census: RESULT=<path> is required -- it is the run's only output -- stop\n"); return 1; }
+    if (!resPath || !*resPath) { printf("P1F: RESULT=<path> is required -- it is the run's only output -- stop\n"); return 1; }
     // Refuse an existing file, before the engine does any work: a run is never resumed into its own
     // output, and a finished census must not be silently appended to or overwritten.
-    if (_access(resPath, 0) == 0) { printf("P1F-Census: RESULT file %s already exists -- delete it or name another file -- stop\n", resPath); return 1; }
+    if (_access(resPath, 0) == 0) { printf("P1F: RESULT file %s already exists -- delete it or name another file -- stop\n", resPath); return 1; }
     g_resFp = fopen(resPath, "w");
-    if (!g_resFp) { printf("P1F-Census: cannot create %s -- stop\n", resPath); return 1; }
-    printf("P1F-Census: built %s, N=%d, kThreads=%d, RESULT saved to %s\n",
+    if (!g_resFp) { printf("P1F: cannot create %s -- stop\n", resPath); return 1; }
+    printf("P1F: built %s, N=%d, kThreads=%d, RESULT saved to %s\n",
            buildStamp(), np, kThreads, resPath);
-    printf("P1F-Census: started %s on %s\n", startStamp(), hostName());
+    printf("P1F: started %s on %s\n", startStamp(), hostName());
     printEnv();
     const auto tStart = std::chrono::steady_clock::now();   // whole-run clock; reported once, on the closing line
 
@@ -283,13 +283,13 @@ int main(int argc, const char* argv[]) {
     case 20: { const FactorParams fp(K20A2::NP, K20A2::NM, K20A2::NFIXED, K20A2::M_MAX, 0);
                g_resNP = K20A2::NP; g_resNM = K20A2::NM; buildFixedRows(K20A2::NP, K20A2::NFIXED, fixed);
                solver = new K20A2(fp, 0, kThreads, fixed, saveResult, nullptr, true); break; }
-    default: printf("P1F-Census: N=%d not supported (14, 16, 18, 20) -- stop\n", np); return 1;
+    default: printf("P1F: N=%d not supported (14, 16, 18, 20) -- stop\n", np); return 1;
     }
     solver->solve();
     delete solver;
     fclose(g_resFp);
     const double totMin = std::chrono::duration<double>(std::chrono::steady_clock::now() - tStart).count() / 60.0;
-    printf("P1F-Census: %d result(s) written to %s (Total time=%.0fmin)\n", g_resCount, resPath, totMin);
+    printf("P1F: %d result(s) written to %s (Total time=%.0fmin)\n", g_resCount, resPath, totMin);
     printf("End of job\n");   // last line of every completed run: a log that stops short of it was interrupted
     fflush(stdout);
     return 0;

@@ -53,7 +53,7 @@ SET "HERE=%~dp0"
 cd /d "%HERE%"
 setlocal
 IF NOT DEFINED P1F_ROOT FOR %%I IN ("%HERE%..\..\..") DO SET "P1F_ROOT=%%~fI"
-IF NOT DEFINED P1F_EXE  SET "P1F_EXE=%P1F_ROOT%\x64\Release\P1F-Census.exe"
+IF NOT DEFINED P1F_EXE  SET "P1F_EXE=%P1F_ROOT%\x64\Release\p1f.exe"
 CALL "%P1F_ROOT%\env_reset.bat"
 
 SET "CASE=K20Aut4-NoSkip"

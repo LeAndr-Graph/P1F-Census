@@ -69,7 +69,7 @@ void K14A2::runExhaustiveSearch() {
         for (auto& ot : orders)
             runRepresentativeMethod(ot.first, ot.second);   // private member; uses kThreads + m_bPrint
         // ONE table per run, so its = TOTAL row is emitted here -- after the LAST token, not inside
-        // runRepresentativeMethod, which is entered once per token.
+        // runRepresentativeMethod, which is entered once per token.  docs/log_table_spec.md 2a, 2c.
         finishRepTable();
     }
 #endif

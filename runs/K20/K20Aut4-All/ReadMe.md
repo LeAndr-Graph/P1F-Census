@@ -75,7 +75,7 @@ The two `~` rows are the fourteen-minute order-5 leg reported while it ran: the 
 every five minutes, and the counts stand still because that leg finds nothing.
 
 `Elapsed` on the `=` row is the sum of the legs' own times, not the wall clock. The closing
-`P1F-Census:` result line says 19 minutes, and the difference is the setup each leg does before its
+`P1F:` result line says 19 minutes, and the difference is the setup each leg does before its
 search starts. Summing the legs is what makes the `=` row exactly the total of the table above.
 
 The last five rows all read `15min`, and that is the formatting, not a stalled clock. `Elapsed`

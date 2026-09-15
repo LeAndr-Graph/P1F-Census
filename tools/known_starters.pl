@@ -23,7 +23,7 @@
 # match nothing until they have been through the canonizer. Two steps:
 #
 #   perl tools/known_starters.pl > known.txt
-#   REP_CANONFILE=known.txt RESULT=known_canon.txt P1F-Census.exe 18 4
+#   REP_CANONFILE=known.txt RESULT=known_canon.txt p1f.exe 18 4
 #   perl tools/compare_to_catalog.pl --index known_canon.txt
 #
 # Done on 2026-08-28, that reproduces the three catalog numbers already on record -- #10710,
