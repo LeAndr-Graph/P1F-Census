@@ -41,33 +41,33 @@ A run refuses to start if its log already exists, so a block cannot be swept twi
 
 ## Block size
 
-Measured on **block 0**, 30 threads, 2026-09-08:
+Measured on **block 0**:
 
 | | |
 |---|---|
-| wall | **17.1 hours** |
 | nodes | 6.62 × 10¹⁰ |
 | classes | **13,616** — `{3: 13611, 6: 5}` |
 
 Blocks are uneven, and this is one sample of the 104.
 
-⚠️ **That wall time came from the old scheduler and should not be planned against.** Most of it
-was threads doing nothing. The rate fell from 9.47 to 0.63 million nodes per second over the run
-while classes found per node stayed flat, so it was the same search at a fifteenth of the speed,
-with 28 of the 30 threads spinning on an empty queue. The queue was replaced on 2026-09-09 by
-sequential branch allocation. The same node count at the run's own peak rate is about **1.9
-hours**, and no block has yet been run end to end under the new scheduler to say where between
-the two it really lands. Measure one before scheduling the other 103.
+**Expected time on a 32-core PC: about 1.5 hours per block, so about 6.5 days for all 104**,
+measured over the most recent 20 blocks. Scale it by your own thread count and rate: the
+progress row prints nodes per millisecond, and block 0's node count above is the yardstick.
 
 ---
 
 ## Reading the printout
 
-After a couple of minutes of setup the run prints a progress row every five minutes:
+Once the setup is done the run states its scope, then prints a progress row every five minutes:
 
 ```
+  blocks 0-0 of 0-103, type 3⁶ 1²
 ~ so far   |                |   14min | 7,260,918,784 (8583/ms) | 1550(0) |Aut|={3:1550}
 ```
+
+The scope line names the blocks this run was asked for -- **both ends inclusive**, the same
+convention as `BStart`/`BLast` in the bat -- out of the 104 the cell is divided into, and the
+cycle type being searched.
 
 | field | meaning |
 |---|---|

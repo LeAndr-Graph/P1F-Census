@@ -3,11 +3,12 @@
 Every one-factorization of K14 whose symmetry group is larger than the trivial one. A full
 run gives 21 classes, `{2:3, 3:5, 4:1, 6:5, 12:5, 84:1, 156:1}`.
 
-This is the **whole** classification for K14, `|Aut| = 2` included, and K14 is the only size
-in this repository where that is possible: its order-2 leg finishes. At K16, K18 and K20 the
-order-2 search is intractable, so their cases stop above it and the `|Aut| = 2` classes need
-a block-driven census instead -- the three `K18-t8` / `K18-t9` cases do that for K18, and no
-one has done it for K16 or K20. That is why this case is `|Aut| > 1` while its siblings are
+This is the **whole** non-rigid classification for K14, `|Aut| = 2` included, and it is reached
+in one pass because K14's order-2 leg is cheap. K16's also finishes -- `K16Aut2` does it in
+about 80 minutes -- but it is already slow enough that the case ships with a harvest target
+rather than a full sweep. At K18 the order-2 search does not finish at all, and the `|Aut| = 2`
+classes need a block-driven census instead: the three `K18-t8` / `K18-t9` cases. At K20 it has
+not been done by any route. That is why this case is `|Aut| > 1` while its siblings are
 `|Aut| > 2` and `|Aut| > 3`.
 
 **Aut2, not Aut3.** A folder name here says `|Aut| >= N`: `K16Aut3-All` is `|Aut| > 2`,
