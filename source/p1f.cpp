@@ -33,8 +33,8 @@
 #include <ctime>
 
 // ---- fixed rows -------------------------------------------------------------------------------
-// The host used to load these from a start-matrix file. The rep method is unseeded (every engine's
-// addRow is a hard error), so they are built here: row 0 = (0,1)(2,3)...(N-2,N-1), row 1 = init()'s
+// The rep method is unseeded (every engine's addRow is a hard error), so these are built here
+// rather than read from a start-matrix file: row 0 = (0,1)(2,3)...(N-2,N-1), row 1 = init()'s
 // second row (0,2)(1,4)(3,6)...(N-3,N-1), row 2 = a copy of row 0 where NFIXED is 3. Rows are in
 // `src` pair layout, which is what init() expects.
 static void buildFixedRows(int np, int nFixed, unsigned char* out) {
@@ -183,9 +183,7 @@ static const char* startStamp() {
 
 // The machine. A rate is meaningless without one: logs here are compared against each other
 // constantly -- 8 threads against 30, this laptop against the 32-core box -- and a log that does
-// not name its host can only be placed by guesswork. One 10-thread K18 log cost exactly that on
-// 2026-09-09, read alongside runs from another machine before anyone noticed it said nothing about
-// where it came from.
+// not name its host can only be placed by guesswork.
 static const char* hostName() {
     static char s[64] = "";
     if (*s) return s;
@@ -234,7 +232,7 @@ int main(int argc, const char* argv[]) {
     SetConsoleOutputCP(CP_UTF8);
     // BELOW NORMAL priority, set before any work starts. A census run saturates every thread it is
     // given for hours or days, and at NORMAL it makes the machine it runs on unusable -- a 10-thread
-    // K20 order-2 run drove this one to a near-crash (2026-09-03). Below normal costs the run almost
+    // K20 order-2 run has driven a machine to a near-crash. Below normal costs the run almost
     // nothing when the box is otherwise idle (it still gets every free core) and yields immediately
     // to anything the user is doing. Set REP_PRIORITY=normal to opt out.
     {
@@ -247,9 +245,6 @@ int main(int argc, const char* argv[]) {
                 printf("p1f.exe: could not lower process priority (error %lu) -- running at the default\n", GetLastError());
         }
     }
-    // g_useColors is gone (2026-08-30). It gated the type string's superscripts on
-    // _isatty(_fileno(stdout)), and every runs\ case pipes stdout into its .log -- so the flag
-    // was always false there and a log never showed one. See source/knSupport.cpp.
     const int np = (argc > 1) ? atoi(argv[1]) : 18;
     int kThreads = (argc > 2) ? atoi(argv[2]) : 10;
     if (kThreads < 1) kThreads = 1;

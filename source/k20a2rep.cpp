@@ -15,7 +15,7 @@
 // The engine is validated on the smaller cases by the same code: K16 |Aut|>2 =
 // {3:19,5:5,7:4,14:1,15:1}=30 (Wanless catalogue), K18 order-4 = 179, order-17
 // -> 2. Known K20 anchors: order-19 -> 7 classes {19:3,57:1,171:2,342:1}
-// (342 = AGL(1,19)); the order-4 parity theorem (MD/order4_parity_theorem.md)
+// (342 = AGL(1,19)); the order-4 parity theorem
 // says K20 admits NO automorphism of order divisible by 4, so order-4 must
 // return 0. Isomorph rejection is by ORDERLY GENERATION: at every cover level
 // the candidate factor-orbits covering the lowest uncovered edge are
@@ -169,11 +169,11 @@ void adj_to_src(const uint8_t* adj, unsigned char* src) {
 // than any other row's. Unlike the serialization, this DOES move the chosen representative: the
 // minimum is now taken in the legacy labeling. If R1 u R2 is not one cycle the walk falls back to
 // the identity, i.e. to the cycle labeling used before.
-// [RACE FIX 2026-09-10] The table used to be filled under a plain `static bool built` that was set
-// TRUE before the fill began, so a second worker reaching its first canonization while the first
-// was still filling could read a half-built labeling and canonize against it -- a wrong key, once,
-// nondeterministically. A function-local static with an initializer is built exactly once under the
-// language's own guard, and every other thread blocks until it is complete.
+// The table must not be filled under a plain `static bool built` set TRUE before the fill begins:
+// a second worker reaching its first canonization while the first is still filling could read a
+// half-built labeling and canonize against it -- a wrong key, once, nondeterministically. A
+// function-local static with an initializer is built exactly once under the language's own guard,
+// and every other thread blocks until it is complete.
 const uint8_t* legacyWalk() {
     static const std::array<uint8_t, N> L = [] {
         std::array<uint8_t, N> T;
@@ -402,7 +402,7 @@ struct RepShared {
     // pairing 0-with-v4Row[i] must pair 1-with-v4Val[i]. Compacted (first nV4 slots).
     // WARNING: the predicate is NOT C(alpha)-invariant, so a filtered run is a SHARD
     // of the labeled search, not a clean class partition -- shard-union completeness
-    // must be validated empirically (see run20a2f.bat header) before census use.
+    // must be validated empirically before census use.
     uint8_t v4Row[4] = { 0, 0, 0, 0 };
     uint8_t v4Val[4] = { 0, 0, 0, 0 };
     int nV4 = 0;
@@ -451,10 +451,8 @@ inline void fanPrint() {
 //   rule 1: an ORBIT is one entry, base row (least member) first, the images after it;
 //   rule 2: the sigma-fixed factor is an entry of size 1.
 //
-// [TUNE 2026-09-07, k20 ONLY -- the sibling rule is deliberately suspended for this pass, on the
-// user's instruction: k14/k16/k18 keep the plain prototype until a winner is mirrored on purpose.]
-// A VTune hotspots profile of this exact case (block 0, 8 threads, 632 s wall / 4,407 s CPU;
-// scratch/prof_k20_triples_r001) put the cost here, and NOT where the spec's section 6.4 guessed:
+// A VTune hotspots profile of this exact case (block 0, 8 threads, 632 s wall / 4,407 s CPU)
+// puts the cost here, and not in genM where it might be expected:
 //     orbCompat 44.7%   is_perfect (+ its array::operator[]) 9.1%   malloc 9.9%
 //     splitNodeL self 9.1%   queue mutex 6.0%   commitOrbit+rollbackTo 4.2%
 //     shared_ptr refcounts 3.6%   the per-child `chosen` copy 1.9%   genM 0.2%
@@ -479,7 +477,7 @@ typedef std::vector<uint32_t> IdxList; // indices into OrbList::ent
 // child; `bits` is the SAME entries' bitmaps copied out CONTIGUOUSLY, and it is the reason this
 // struct exists.
 //
-// [TUNE 2026-09-07, third pass] The filter used to walk an index list and load bits[j] for
+// Without it the filter walks an index list and loads bits[j] for
 // scattered j -- one dependent load per entry into a 38 MB plane. The 60 s profile of the running
 // case charged 28.1% to bitsDisjoint, which is a handful of instructions: it was waiting on those
 // loads, not doing the AND. Copying each survivor's 32-byte record into the child's own buffer
@@ -516,11 +514,11 @@ inline bool bitsDisjoint(const OrbBits& a, const OrbBits& b) {
 // Keeping the bitmap plane and the rows apart is the point: the common case returns on the
 // bitmaps alone and never touches ent[] at all.
 //
-// [TUNE 2026-09-07, second pass] The COMMITTED entry is loop-invariant -- one c for a whole filter
-// pass over the parent's list -- so it arrives already resolved rather than re-derived per entry
-// (that cost showed as orbCompat self time and vector<OrbEnt>::operator[] 3.4%, now gone).
-// Third pass: the caller holds the candidate's bitmap CONTIGUOUSLY and passes it in, so this half
-// of the test no longer touches the 38 MB plane at all.
+// The COMMITTED entry is loop-invariant -- one c for a whole filter pass over the parent's list --
+// so it arrives already resolved rather than re-derived per entry (re-deriving it showed as
+// orbCompat self time and vector<OrbEnt>::operator[] 3.4% in the profile). The caller holds the
+// candidate's bitmap CONTIGUOUSLY and passes it in, so this half of the test never touches the
+// 38 MB plane at all.
 inline bool rowsHamiltonian(const Match& jrow, const OrbEnt& ce) {
     for (int r = 0; r < ce.nrows; r++) if (!is_perfect(jrow, ce.rows[r])) return false;
     return true;
@@ -534,9 +532,7 @@ int g_pruneMaxFactors = 0;            // [PORT] REP_PRUNELEVEL: skip per-node se
 long long g_last_print_nodes = 0;     // g_nodes at the previous progress line (for the rate)
 int  g_order = 0, g_typeIdx = 0, g_numTypes = 0;    // current order, current cycle type 1/N
 
-// The two identity cells of a column-set-A row: what printSubset() used to print as
-// [SUBSET].  Wording is unchanged; only the
-// destination changed -- these are table cells now.
+// The two identity cells of a column-set-A row: its symmetry and type strings.
 static void subsetCells(int order, bool isV4, bool isE9, bool isS3, const char* tstr,
                         std::string& symmetry, std::string& type)
 {
@@ -676,8 +672,6 @@ inline void progressTick(long long& nodes_flush, std::atomic<long long>& g_nodes
     // NOT get one -- there a block row lands every minute or so and already carries the same
     // cumulative figures, so this would duplicate the row above it. Column set A does, because
     // one leg can run an hour (K18Aut3-All's order-3 3^6 is 62 minutes) and nothing else prints.
-    // The cover-level counters this line used to carry (g_emits, g_dupCovers) are gone: they
-    // answered a different question with the same words as the closing line.
     if (!g_tbl || g_tblIsB) return;
     const double elapsed = g_runSec + std::chrono::duration<double>(now - g_legT0).count();
     long long saved; std::map<int, int> savedHist, dupHist;
@@ -780,7 +774,7 @@ struct RepWorker {
         commitRows(orbit.data(), (int)orbit.size());
     }
 
-    // [TUNE 2026-09-07] the same commit, from a plain row pointer. REP_PRECALC already holds an
+    // The same commit, from a plain row pointer. REP_PRECALC already holds an
     // orbit's rows contiguously in its OrbEnt, so the local recursion commits straight from there
     // instead of first copying them into a std::vector to satisfy commitOrbit's signature.
     void commitRows(const Match* rows, int n) {           // append n factors
@@ -833,7 +827,7 @@ struct RepWorker {
                     std::sort(rel.begin(), rel.end());        // canonicalize factor order
                     // [LEGACY CANON] compare the rows as `src` PAIRS -- the project canonizer's form -- and
                     // not as adjacency vectors: both lead with the partner of 0 but diverge after it, so the
-                    // two pick different representatives of the same class (MD/canonization_switch_spec.md).
+                    // two pick different representatives of the same class.
                     std::string s; s.reserve(NM * N);         // serialized relabeled P1F, as src pairs
                     for (auto& g : rel) { unsigned char sc[N]; adj_to_src(g.data(), sc); s.append((const char*)sc, N); }
                     if (first || s < best) { best = s; first = false; bestCount = 1; bestAdj.clear(); for (auto& g2 : rel) for (int u2 = 0; u2 < N; u2++) bestAdj.push_back((char)g2[u2]); }
@@ -911,9 +905,9 @@ struct RepWorker {
     // generate every perfect matching of the still-uncovered graph that contains
     // the forced first edge, pairing the lowest unused vertex with each legal
     // partner; prune partials that cannot stay Hamiltonian with a chosen factor.
-    // BITMASK FORM (2026-07-05; from the K20 type-6 CPU profile where genM+imgUncovered
-    // were 82% of the run). Semantics identical to the byte-array version, same candidate
-    // order (ascending v), so the emitted matchings and all downstream dedup/keys match.
+    // BITMASK FORM (from the K20 type-6 CPU profile where genM+imgUncovered were 82% of
+    // the run). Candidate order is ascending v, which is what fixes the emitted matchings
+    // and every downstream dedup and key.
     // usedMask is passed BY VALUE so nothing needs undoing; the candidate partners of u
     // are computed as ONE uint32 mask, then iterated with tzcnt. The path-closure ban is
     // precomputed once per level (path_end[k][u] is invariant across the v-loop: every
@@ -1351,12 +1345,12 @@ struct RepWorker {
     }
 
     // [PRECALC] local recursion (used when the shared queue is full), same tree as splitNodeL.
-    // [TUNE 2026-09-07] This is where the nodes are: the pool expands ONE level per queue item and
+    // This is where the nodes are: the pool expands ONE level per queue item and
     // drains whole subtrees here once the queue is at QCAP, so nearly every node in the run is a
-    // coverLocal call. The old version went through splitNodeL and therefore paid, per node, a
+    // coverLocal call. Going through splitNodeL would pay, per node, a
     // make_shared<IdxList> (malloc 9.9% + shared_ptr refcounts 3.6% in the profile) and TWO copies
-    // of the whole partial cover -- splitNodeL built `chosen` + the entry's rows into a child
-    // vector, and coverL then sliced the 1-3 rows back out of it -- to recover rows that were
+    // of the whole partial cover -- splitNodeL builds `chosen` + the entry's rows into a child
+    // vector, and coverL then slices the 1-3 rows back out of it -- to recover rows that are
     // already sitting in ce.rows. None of that is needed on a depth-first path: the parent's list
     // stays alive on the stack for the whole subtree, so it can live in a per-thread buffer indexed
     // by recursion depth, and the child can be committed straight from the entry.
@@ -1462,7 +1456,7 @@ void enumTypes(int order, std::vector<std::vector<int>>& out) {
 }
 
 // ---- V4 (Klein four-group) machinery -----------------------------------------------
-// Vertex shapes per MD/klein_four_theorem.md: each involution of a P1F fixes 0 or 2
+// Vertex shapes, from the Klein-four counting theorem: each involution of a P1F fixes 0 or 2
 // vertices (<=2-fixed lemma), so the vertex set splits into f global-fixed points,
 // s_i pairs fixed by exactly involution i, and F free (regular) 4-orbits with
 // f + 2(s1+s2+s3) + 4F = N and fix_i = f + 2 s_i in {0, 2}. Legs are canonicalized
@@ -1804,7 +1798,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
     int nThreads = (kThreads > 0) ? kThreads : 1;   // worker count from the standard KThreads knob
 
     // [TEST HOOKS] REP_NOSKIP=1 disables the odd-prime parity-theorem type skip (used by the
-    // theorem-VERIFICATION runs in run20a2Tests.bat, which search theorem-covered types and
+    // theorem-VERIFICATION runs, which search theorem-covered types and
     // must find 0). REP_ONLYTYPES=comma list of 1-based cycle-type indices restricts the run
     // to those types (all others reported as skipped) -- lets a verification run search e.g.
     // order-3 types 1 and 3 without touching the intractable type 5.
@@ -1819,14 +1813,13 @@ void K20A2::runRepresentativeMethod(int order, int target) {
     // count guides the shard granularity. No disk / no checkpoint (position == the range you run).
     int shardLevel = 0;
     if (const char* e = std::getenv("REP_LEVEL")) shardLevel = atoi(e);
-    // [PORT from k18a2rep / k14a2rep, 2026-09-06] REP_PRUNELEVEL=N: once >= N factors are committed, skip the
+    // REP_PRUNELEVEL=N: once >= N factors are committed, skip the
     // per-node setwiseStab/schreierDedup (explore every orbit, subtree marked trivial); the global canonKey
-    // stays the exact dedup so the class set is unchanged, only the node count grows. Ported to k20 ONLY,
-    // on the user's instruction -- k16 deliberately left without it (a sibling-code-rule deviation, not drift).
-    // 2026-09-07: REP_PRECALC was then mirrored into k16, and that path wants every node below the seed
-    // trivial, so it cannot lean on this flag there. It did not matter -- on the K16 order-3 oracle both
-    // sides walked the same 1,349,431-node tree anyway, that block root's stabilizer being already trivial.
-    // The omission still costs nothing and still stands: do not port this flag to k16 without asking.
+    // stays the exact dedup so the class set is unchanged, only the node count grows. Read by k20, k18 and
+    // k14 but NOT by k16 -- a deliberate sibling-code-rule deviation, not drift: k16's REP_PRECALC path wants
+    // every node below the seed trivial, so it cannot lean on this flag there. The omission costs nothing --
+    // on the K16 order-3 oracle both sides walk the same 1,349,431-node tree, that block root's stabilizer
+    // being already trivial -- and it stands: do not port this flag to k16 without asking.
     g_pruneMaxFactors = 0;
     if (const char* e = std::getenv("REP_PRUNELEVEL")) g_pruneMaxFactors = atoi(e);
     // REP_RANGE=start:end                     -> process that block range on the work-queue (unset -> COUNT the level).
@@ -1994,19 +1987,19 @@ void K20A2::runRepresentativeMethod(int order, int target) {
           while (cols < 14 && used + 1 < sizeof(tstr)) { tstr[used++] = ' '; cols++; } tstr[used] = '\0'; }
         int tIdx = ++g_typeCounter;      // 1-based enumeration index of this type (stable, includes skipped types)
 
-        // Odd-prime parity theorem (MD/odd_prime_parity_theorem.md): for odd PRIME order p
+        // Odd-prime parity theorem: for odd PRIME order p
         // with (N-1) % p != 0, a cycle type with an ODD number of p-cycles admits no
         // invariant P1F -- factor-orbit counting (orbit sizes 1 or p) forces a fixed factor,
         // and a fixed factor must pair the fixed vertices among themselves, so N - p*t is
         // even and t must be even. Such types are EMPTY BY PROOF and are skipped (this is
         // what retires the intractable K20 order-3 type 3^5.1^5). Validated: brute force
-        // K8/K12/K14 (scratchpad/order3_parity_check.cpp) + K20 full searches of orders
+        // K8/K12/K14 + K20 full searches of orders
         // 11,13,17 and order-3 types 3^1/3^3 all returned 0. REP_NOSKIP=1 searches anyway.
         if (isV4) {
             // V4 shapes containing a FIXED-POINT-FREE involution are empty by the order-2
             // parity theorem when N == 0 (mod 4); combined with the Klein-four counting
             // theorem (no all-fix-2 shape exists for N == 0 mod 4) a V4 run on such N
-            // skips every shape -> 0, echoing MD/klein_four_theorem.md.
+            // skips every shape -> 0.
             const V4Shape& sp = shapes[typeIdx];
             bool hasFpf = (sp.f + 2 * sp.s1 == 0) || (sp.f + 2 * sp.s2 == 0) || (sp.f + 2 * sp.s3 == 0);
             if (!noSkip && hasFpf && (N % 4 == 0)) {
@@ -2031,7 +2024,7 @@ void K20A2::runRepresentativeMethod(int order, int target) {
             g_typeSkipped++;
             continue;
         }
-        // POWER-REDUCTION skip (2026-07-06, THEOREM-BACKED ONLY -- skipping cannot lose
+        // POWER-REDUCTION skip (THEOREM-BACKED ONLY -- skipping cannot lose
         // classes; REP_NOSKIP searches anyway): a sigma-invariant P1F is invariant under
         // every power of sigma, so for each prime p | order the power sigma^(order/p)
         // (an order-p automorphism) must itself satisfy the parity theorems. A part of
@@ -2066,8 +2059,8 @@ void K20A2::runRepresentativeMethod(int order, int target) {
             continue;
         }
         // [SETUP TIMING] Everything from here to the worker fan-out runs BEFORE the first search
-        // node, and printed nothing -- which is why an over-cap order-2 leg looks hung for its
-        // first half hour (K20 2^9.1^2: ~37 min of silence, measured 2026-09-03). One line per
+        // node, and without these lines an over-cap order-2 leg looks hung for its first half
+        // hour (K20 2^9.1^2: ~37 min of silence). One line per
         // stage, with the size of what the stage produced, so the cost is attributable and the
         // question "is this worth caching" has an answer per stage.
         auto setupT0 = std::chrono::steady_clock::now();
@@ -2555,10 +2548,10 @@ void K20A2::runRepresentativeMethod(int order, int target) {
         } else {
             // ENUMERABLE: many root reps already -> simple per-rep fan-out via an atomic index.
             //
-            // [SHARD] REP_LEVEL / REP_RANGE APPLY HERE TOO. They used to be read only inside the
-            // over-cap branches above, which this path never enters, so on a type whose C(alpha)
-            // was small enough to enumerate -- K20 3^6.1^2, |C| = 1,049,760 -- a COUNT request was
-            // silently ignored and ran as an unbounded sweep instead.
+            // [SHARD] REP_LEVEL / REP_RANGE APPLY HERE TOO. This path is taken on a type whose
+            // C(alpha) is small enough to enumerate -- K20 3^6.1^2, |C| = 1,049,760 -- and a
+            // COUNT request has to be honoured here as well, not only in the over-cap branches
+            // above, or it runs as an unbounded sweep instead.
             //
             // The root reps ARE the level-1 partition of this path: collectTasks forces the anchor
             // edge and the C(alpha)-orbit collapse above keeps one representative per orbit, so they

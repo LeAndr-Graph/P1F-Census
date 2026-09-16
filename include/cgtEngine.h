@@ -169,12 +169,12 @@ template<int N> inline std::vector<Perm<N>> setwiseStab(const BSGS<N>& BG,
         for (int j = 0; j < l; j++) { int bj = BG.base[j], cj = cur[bj]; if (isCov(bl, bj) != isCov(cl, cj)) return false; }
         return true;
     };
-    // K-minimality prune, HOISTED (2026-07-23): the stabilizer chain over the prefix images
+    // K-minimality prune, HOISTED: the stabilizer chain over the prefix images
     // cur[base[j]] (j<l) is INVARIANT across the candidate loop -- urep[l][o] fixes base[0..l-1]
-    // pointwise, so cur[base[j]] == pre[base[j]] for every candidate o. The old code rebuilt the
-    // whole chain from Kgens once PER CANDIDATE; now it is built once per rec call and rebuilt
-    // only when Kgens has grown (deeper recursion can add generators). Chain values at every use
-    // are identical to the per-candidate version => identical pruning, identical Kgens output.
+    // pointwise, so cur[base[j]] == pre[base[j]] for every candidate o. It is therefore built
+    // once per rec call and rebuilt only when Kgens has grown (deeper recursion can add
+    // generators), instead of once per candidate. Chain values at every use are identical to
+    // rebuilding it per candidate => identical pruning, identical Kgens output.
     thread_local std::vector<std::vector<Perm<N>>> chainPool;  // per-level chain storage (recursion-safe)
     if ((int)chainPool.size() < m) chainPool.resize(m);
 

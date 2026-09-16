@@ -2,19 +2,15 @@
 // printWithPowers. The four rep engines forward-declare the function themselves, so no
 // header is needed.
 //
-// DIVERGES from the original, deliberately, 2026-08-30. There the rendering was gated on
-// `g_useColors`, which main() set from _isatty(_fileno(stdout)). Every runs\ case pipes the
-// engine's output through PowerShell into its .log, so stdout is never a terminal and the gate
-// meant a log NEVER showed a superscript: `2^9` in the file, `2⁹` only if you ran the exe by
-// hand. Same type, two spellings, for a reason no reader of the log could see.
+// The superscripts are unconditional -- deliberately NOT gated on stdout being a terminal. Every
+// runs\ case pipes the engine's output through PowerShell into its .log, so such a gate would mean
+// a log NEVER showed a superscript: `2^9` in the file, `2⁹` only if you ran the exe by hand. Same
+// type, two spellings, for a reason no reader of the log could see.
 //
-// The gate is gone and the superscripts are unconditional. That is safe ONLY because the bats
-// now set [Console]::OutputEncoding to UTF-8 -- without it PowerShell decodes this UTF-8 as the
-// OEM code page and re-encodes the result, and `⁹` (E2 81 B9) lands in the log as
-// CE 93 C3 BC E2 95 A3. Measured, not assumed: change one of the two and you must change both.
-//
-// `g_useColors` went with it. This function was its only reader in p1f, nothing here colors
-// anything, and a flag named for colors that in fact controlled superscripts was a trap.
+// Unconditional is safe ONLY because the bats set [Console]::OutputEncoding to UTF-8 -- without it
+// PowerShell decodes this UTF-8 as the OEM code page and re-encodes the result, and `⁹`
+// (E2 81 B9) lands in the log as CE 93 C3 BC E2 95 A3. Measured, not assumed: change one of the
+// two and you must change both.
 #include <string>
 #include <cctype>
 
