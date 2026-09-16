@@ -102,14 +102,10 @@ source/       the engine: one solver per graph size, plus the driver
 include/      shared headers
 runs/         one folder per computation, grouped by graph
 regression/   fast correctness suite with frozen expected output
-tools/        Perl helpers: catalogue comparison, merging, canonical formatting
+tools/        the check script: a run's results looked up in the catalogue for its N
 docs/         env_variables.txt -- every environment variable the engine reads
 AllResults/   the catalogues
 ```
-
-One tool has no data here: `tools/k1717_count.pl` works on the K17,17 bipartite catalogue, which
-is not mirrored in this repository because of its size. Download it from
-[10.5281/zenodo.22548329](https://doi.org/10.5281/zenodo.22548329) and pass it as the argument.
 
 ## Regression suite
 

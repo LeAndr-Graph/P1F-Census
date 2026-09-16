@@ -62,18 +62,12 @@ The deposited copies are byte-identical to the files here -- md5
 edited, the published record and this folder diverge, and the record numbers cited in the papers
 stop matching; treat that as a reason not to edit them. Deposit paperwork is in `zenodo\`.
 
-The three smaller ones were built by `tools\make_catalog.pl` -- dedup on the canonical form,
-sort on it, emit with the header -- K14 and K20 on 2026-08-30 from a single run of their own
-`runs\` case, K16 on 2026-09-01 from two: `K16Aut3-All` for the 30 with `|Aut| > 2` and
-`K16Aut2` for the 60 with an involution, which overlap in the one class of `|Aut| = 14`:
-
-    perl tools/make_catalog.pl --n 16 --scope "all P1F classes with |Aut| > 1" \
-         AllResults/K16_P1F_aut_gt1.txt AllResults/K16_P1F_aut_gt2.txt runs/K16Aut2/result.txt
-    records read : 90   duplicates : 1   written : 89
-
-To re-run that command the old `K16_P1F_aut_gt2.txt` has to come back out of git history, since
-it was deleted once the merge was made. `runs\K16Aut3-All\result.txt` is the same 30 classes
-and works as the input instead.
+The three smaller ones were assembled the same way -- dedup on the canonical form, sort on it,
+emit with the header -- by a script kept outside this repository, K14 and K20 on 2026-08-30 from
+a single run of their own `runs\` case, K16 on 2026-09-01 from two: `K16Aut3-All` for the 30 with
+`|Aut| > 2` and `K16Aut2` for the 60 with an involution, which overlap in the one class of
+`|Aut| = 14` -- 90 records read, 1 duplicate, 89 written. This repository publishes the answers
+and the means to check them, not the bookkeeping that produced the archives.
 
 They carry external corroboration that K18 has none of. K16's 89 is the published total number
 of perfect one-factorizations of K16, and its `|Aut| > 2` part, 30, is the exact literature
@@ -94,16 +88,13 @@ numbering**: catalog `#N` anywhere in this ReadMe, or in project notes, means th
 file. Its headers run contiguously `#1 .. #10710`, so `#N` is simply the `N`-th record.
 
 It carries a title, a total, an aut summary table and a note on the ordering, and it separates
-records with a blank line. `tools\to_result_format.pl` refuses it by name for exactly that
-reason: converting it to run format would strip all of that.
+records with a blank line. That is why it is a catalog and not a run's output: rewriting it into
+run format would strip all of it.
 
-It has no tracked recipe. It was assembled once, from the banks of the runs listed in section 1.1,
-by merging them into a single canonizer input and then canonizing, deduplicating, sorting and
-emitting. That one-off merge step is not part of this repository; the file itself is the record.
-
-`tools\make_catalog.pl` now covers the last of those steps -- dedup, sort, emit -- for any N,
-and it built the other three catalogs. It does NOT replace the K18 recipe: it takes RESULT files
-that are already canonical, and K18's inputs needed canonizing and merging first.
+It was assembled once, from the banks of the runs listed in section 1.1, by merging them into a
+single canonizer input and then canonizing, deduplicating, sorting and emitting. Its inputs needed
+that canonizing and merging first, which the other three did not. None of those steps is part of
+this repository; the file itself is the record, and section 6 is how it was verified.
 
 ### 1.1 Where its 10,710 came from
 
@@ -352,13 +343,15 @@ gives that block a row whose `Total saved(duplicates)` reads `0(1)`, and the foo
 
 ### 6.1 How the six known classes were pinned (2026-08-28)
 
-    perl tools/known_starters.pl > known.txt
+The literature gives those six as starters -- a short list of pairs developed into all 17 rounds by
+adding a constant. Each was developed from its published starter into a matrix, collected in
+`known.txt`, and then:
+
     REP_CANONFILE=known.txt RESULT=known_canon.txt p1f.exe 18 4
     perl tools/compare_to_catalog.pl --index known_canon.txt
 
-`tools\known_starters.pl` develops each published starter into all 17 rounds. The engine then
-re-canonicalizes them, because a matrix from any other source is in a different labeling and
-matches nothing until it has been. `--index` reports which catalog record each one is.
+The engine re-canonicalizes them first, because a matrix from any other source is in a different
+labeling and matches nothing until it has been. `--index` reports which catalog record each one is.
 
 Three independent checks agree, so this is not a bare assertion.
 
