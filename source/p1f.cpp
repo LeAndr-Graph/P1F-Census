@@ -10,12 +10,8 @@
 //   RESULT=<path>                the run's ONE output file -- required, never appended to
 //
 // A p1f run has exactly one result output, in one format, whatever the mode and whatever N.
-// REP_PRELOAD, REP_INFO and KNA2_RESULT are GONE: the first read a
-// baseline of previously-found classes, the other two were second outputs in internal formats. So
-// are REP_F3CAP, REP_F3L4 and REP_CANDCAP, which each let a block return less than it holds and so
-// break the one promise ownership makes. A public user of this tool sees classes and nothing else
-// -- no block coordinates, no stay/swap patterns, no legacy P-file layout. Everything that needs
-// those lives in tools/.
+// A user of this tool sees classes and nothing else -- no block coordinates, no stay/swap
+// patterns, no legacy P-file layout. Everything that needs those lives in tools/.
 
 #include "k14a2.h"
 #include "k16A2.h"
@@ -85,34 +81,6 @@ static bool saveResult(void* /*cbClass*/, const unsigned char* results, int aut,
     }
     fflush(g_resFp);   // per record: a run killed after 30 hours must leave a valid, complete prefix
     return true;
-}
-
-// ---- environment contract ---------------------------------------------------------------------
-// Stop on a variable that no longer exists rather than ignoring it. Someone who sets REP_PRELOAD
-// means to resume from a baseline; silently running without one would produce a file that looks
-// like a census and is not.
-//
-// The last three are gone for the same reason turned inside out: each one makes a block report
-// LESS than the block holds, and ownership then reads that partial answer as final. A class whose
-// owner is the truncated block is written by nobody, and the run still ends "this range owns what
-// it wrote". Diagnostics that quietly cost completeness have no place in a tool whose one output
-// is a census.
-static bool checkRemovedEnv() {
-    static const char* const removed[][2] = {
-        { "REP_PRELOAD",  "class baselines are gone -- ownership dedups statelessly" },
-        { "REP_INFO",     "replaced by RESULT" },
-        { "KNA2_RESULT",  "replaced by RESULT" },
-        { "REP_F3CAP",    "per-block time cap -- a truncated block can miss the cover it OWNS, and no other block writes it: silent class loss" },
-        { "REP_F3L4",     "level-4 block sharding -- both shards of a block believe they are block c, so both write its owned class" },
-        { "REP_CANDCAP",  "biased genM candidate subset -- never a census, same silent-loss mode as a time cap" },
-        { "REP_F3MAX",    "block ranges are given by their ENDS now: use REP_F3STOP=<last raw block c, inclusive>. It is refused rather than read, because a count read as a stop -- or a stop read as a count -- runs a different range and still reports success" },
-        { "REP_TRIPLES",  "renamed REP_PRECALC. The mechanism was never triples-specific -- nrows comes from the orbit, so the same builder yields TRIPLES at order 3 and DOUBLES at order 2, which is what the k18 t8/t9 legs use. Refused rather than aliased: a run whose log says TRIPLES while building doubles misreports what it did" },
-    };
-    bool bad = false;
-    for (const auto& r : removed)
-        if (std::getenv(r[0])) { printf("p1f.exe: %s is no longer supported -- %s\n", r[0], r[1]); bad = true; }
-    if (bad) printf("p1f.exe: unset the variable(s) above and re-run -- stop\n");
-    return !bad;
 }
 
 // Ownership is defined against a BLOCK COLUMN: the owner of a class is the minimum block index
@@ -248,7 +216,6 @@ int main(int argc, const char* argv[]) {
     const int np = (argc > 1) ? atoi(argv[1]) : 18;
     int kThreads = (argc > 2) ? atoi(argv[2]) : 10;
     if (kThreads < 1) kThreads = 1;
-    if (!checkRemovedEnv()) return 1;
     if (!checkOwnerEnv(np)) return 1;
     const char* resPath = std::getenv("RESULT");
     if (!resPath || !*resPath) { printf("p1f.exe: RESULT=<path> is required -- it is the run's only output -- stop\n"); return 1; }

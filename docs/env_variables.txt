@@ -237,13 +237,3 @@ REP_F17SUB            <stride>    x  .  x  .   Histogram subsample stride for RE
 REP_DIAGPROBE         <depth>     .  .  x  .   Run the diagonal look-ahead as a measurement only,
                                                with no pruning, from that depth.
 REP_DIAGSUB           <stride>    .  .  x  .   Probe stride for REP_DIAGPROBE; default 1000.
-
-
-9. Refused names
-----------------
-
-A run that sets one of these stops and says so. They were removed because each could silently
-lose classes or misreport what a run did.
-
-    REP_PRELOAD    REP_INFO    KNA2_RESULT    REP_F3CAP    REP_F3L4    REP_CANDCAP
-    REP_TRIPLES  (renamed REP_PRECALC)        REP_F3MAX    (replaced by REP_F3STOP)
