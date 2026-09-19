@@ -12,7 +12,7 @@ have to be looked up:
 | `K14_P1F_aut_gt1.txt` | `\|Aut\| > 1` | K14's order-2 leg finishes, so the classification is complete |
 | `K16_P1F_aut_gt1.txt` | `\|Aut\| > 1` | since 2026-09-01: `runs\K16Aut2` harvests the 59 `\|Aut\| = 2` classes in 7 minutes |
 | `K18_P1F_aut_gt1.txt` | `\|Aut\| > 1` | the `\|Aut\| = 2` half comes from the three block-driven census cases |
-| `K20_P1F_aut_gt3.txt` | `\|Aut\| > 3` | `\|Aut\| = 3` is the one cell no theorem settles and no run finishes |
+| `K20_P1F_aut_gt3.txt` | `\|Aut\| > 3` | `\|Aut\| = 3` is the one cell no theorem settles; its census (`runs\K20\K20Aut3`, 104 blocks) is in progress, 76 blocks done, and its classes will be appended when it completes |
 
 **All four are complete for the scope they state.** K18's `|Aut| = 2` half stopped growing on
 2026-09-01, when the last open stratum -- type 9, `a = 4` -- finished and found nothing the
