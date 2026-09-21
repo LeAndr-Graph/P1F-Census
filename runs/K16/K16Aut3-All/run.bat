@@ -6,7 +6,7 @@ REM  published K16 count and matches the literature exactly.
 REM  AllResults\K16_P1F_aut_gt1.txt is the archived catalog -- a re-run must
 REM  REPRODUCE these classes, not read them.
 REM  |Aut| = 2 is out of scope FOR THIS CASE, but no longer for K16: runs\K16Aut2
-REM  is the order-2 leg, and since 2026-09-01 the catalog is the union of the two --
+REM  is the order-2 leg, and the catalog is the union of the two --
 REM  K16_P1F_aut_gt1.txt, 89 classes, the complete K16 classification.
 REM
 REM  RUN THIS .BAT AS IS for the whole classification.  The order set below,

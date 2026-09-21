@@ -3,8 +3,8 @@ REM ============================================================================
 REM  runs\K14Aut2-All -- the full K14 |Aut| > 1 classification.
 REM  Aut2, not Aut3: a folder name says |Aut| >= N, so K16Aut3-All is |Aut| > 2 and
 REM  K20Aut4-All is |Aut| > 3.  This case reaches |Aut| >= 2, because K14 is the one
-REM  size whose order-2 leg finishes.  It was called K14Aut3-All until 2026-08-30,
-REM  a name that excluded three of the 21 classes it actually produces.
+REM  size whose order-2 leg finishes.  It was once called K14Aut3-All, a name that
+REM  excluded three of the 21 classes it actually produces.
 REM  A full run gives 21 classes {2:3, 3:5, 4:1, 6:5, 12:5, 84:1, 156:1}.
 REM  AllResults\K14_P1F_aut_gt1.txt is the archived catalog -- a re-run must
 REM  REPRODUCE these classes, not read them.

@@ -1,10 +1,10 @@
 @echo off
 REM ============================================================================
 REM  runs\K18-t9-a4 -- K18 |Aut| = 2, TYPE 9 (2^9, fpf), a = 4 stratum.
-REM  The open stratum: a = 4 is fertile and does contain |Aut| = 2 classes (the
-REM  first was found in block 4.0.483), so the t9 count is > 727.  What is known
-REM  so far is kept in AllResults\K18-t9-a4.txt -- a re-run must REPRODUCE those
-REM  classes, not read them.
+REM  COMPLETE.  This was the last open stratum of the K18 |Aut| = 2 census; the
+REM  sweep finished and found 5 classes, all of which the catalogue already held,
+REM  so the type-9 total stands at 727 (a = 0) + 5 (a = 4).  A re-run must
+REM  REPRODUCE those classes, not read them.
 REM
 REM  RUN THIS .BAT AS IS for the full sweep: RAW blocks c = 0 .. 65039, of which
 REM  59,872 are canonical and actually completed.
@@ -17,21 +17,10 @@ REM  The subset is [REP_F3START, REP_F3STOP] -- both ends included.  For example
 REM  first 1000 raw blocks:
 REM      SET "REP_F3START=0"
 REM      SET "REP_F3STOP=999"
-REM  A subset is self-contained -- no baseline is read, and none is needed: duplicate
-REM  rejection is ON by default, so a range writes only the classes it OWNS.  A class's
-REM  owner is the lowest block of the column that holds it, which every block computes
-REM  the same way, so separately run ranges are DISJOINT and simply concatenate -- no
-REM  merge, no dedup.  A block that re-finds a class owned elsewhere logs "rejected
-REM  (foreign)" and writes nothing; REP_OWNERALL=1 names the owner of each, and
-REM  REP_OWNER=0 switches the filter off and records every re-find instead.
+REM  A subset is self-contained -- no baseline is read, and none is needed: separately
+REM  run ranges are DISJOINT and simply concatenate, with no merge and no dedup.
 REM  To resume an interrupted run, take the last block the log printed and set
 REM  REP_F3START to its c plus 1.
-REM
-REM  FAST FLAG SET (~3x wall over the plain run, validated identical-class):
-REM      REP_TYPEMASK=1      one-per-pair as a genM vertex-1 mask
-REM      REP_SGEN=1          forced-S rows enumerated on the sigma0 quotient
-REM      REP_DIAGPRUNE=8:14  diagonal look-ahead prune
-REM  All three are a = 4 only.
 REM
 REM  The log and the result file are named after the case AND the range, so two ranges
 REM  never write over each other:  K18-t9-a4_<start>-<stop>.log and K18-t9-a4_<start>-<stop>.txt

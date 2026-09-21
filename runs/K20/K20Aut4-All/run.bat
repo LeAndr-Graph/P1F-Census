@@ -23,7 +23,7 @@ REM
 REM  RUN THIS .BAT AS IS for the whole classification.  The order set below,
 REM  {19,V4,E9,S3,5,6,7,9}, is every cell not settled by a theorem.  Orders 5 and 7
 REM  are expected-EMPTY and are SEARCHED rather than asserted, so the run states the
-REM  emptiness instead of citing it.  Measured, 10 threads, 2026-08-30: order 5 is
+REM  emptiness instead of citing it.  Measured on 10 threads: order 5 is
 REM  14 minutes of the 19 (all of it type 5^4; type 5^2 1^10 is skipped), order 7 is
 REM  0.1s.  V4, E9 and S3 are near-instant: both arithmetic V4 shapes contain a
 REM  fixed-point-free involution and are skipped citing the order-2 parity theorem.

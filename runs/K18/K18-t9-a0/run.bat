@@ -16,26 +16,10 @@ REM  The subset is [REP_F3START, REP_F3STOP] -- both ends included.  For example
 REM  first 1000 raw blocks:
 REM      SET "REP_F3START=0"
 REM      SET "REP_F3STOP=999"
-REM  A subset is self-contained -- no baseline is read, and none is needed: duplicate
-REM  rejection is ON by default, so a range writes only the classes it OWNS.  A class's
-REM  owner is the lowest block of the column that holds it, which every block computes
-REM  the same way, so separately run ranges are DISJOINT and simply concatenate -- no
-REM  merge, no dedup.  A block that re-finds a class owned elsewhere logs "rejected
-REM  (foreign)" and writes nothing; REP_OWNERALL=1 names the owner of each, and
-REM  REP_OWNER=0 switches the filter off and records every re-find instead.
+REM  A subset is self-contained -- no baseline is read, and none is needed: separately
+REM  run ranges are DISJOINT and simply concatenate, with no merge and no dedup.
 REM  To resume an interrupted run, take the last block the log printed and set
 REM  REP_F3START to its c plus 1.
-REM
-REM  ACCELERATORS: REP_TYPEMASK / REP_SGEN / REP_PATAPPLY=oneperpair are UNSOUND for
-REM  a = 0 (the engine accepts them and silently returns 0), and REP_DIAGPRUNE is
-REM  refused unless REP_F3A=4.
-REM  REP_PRECALC is the exception and is ON below.  It precalculates, once per block,
-REM  the orbits {F, sigmaF} admissible at that block's prefix and then FILTERS that
-REM  list instead of regenerating candidates with genM at every node.  Measured on
-REM  blocks 0-9, 10 threads: 368.8s -> 65.5s, a 5.6x speedup, with the SAME TREE
-REM  (163,664,896 nodes against 163,667,968) and the same 8 classes, compare.pl
-REM  passing both ways.  It needs REP_PRUNELEVEL=1, which is already set; without
-REM  that the two paths walk different trees.  Unset it to fall back.
 REM
 REM  The log and the result file are named after the case AND the range, so two ranges
 REM  never write over each other:  K18-t9-a0_<start>-<stop>.log and K18-t9-a0_<start>-<stop>.txt

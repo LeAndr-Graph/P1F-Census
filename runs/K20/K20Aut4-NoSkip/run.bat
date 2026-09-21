@@ -13,7 +13,7 @@ REM  Anything other than 0 means a theorem is being misapplied -- either the pro
 REM  is wrong or the predicate that implements it skips a type it should not.  The
 REM  predicate is the likelier of the two and no test covered it before this one.
 REM
-REM  WHY IT IS WORTH A CASE.  Measured 2026-09-03, and the numbers are the argument:
+REM  WHY IT IS WORTH A CASE.  Measured, and the numbers are the argument:
 REM
 REM      orders 11,13,17 searched      0.0s     362 nodes     0 classes
 REM      order 4, all 25 types        32.6s      62 nodes     0 classes
