@@ -1916,7 +1916,18 @@ void K16A2::runRepresentativeMethod(int order, int target) {
     // pipeline (mutex-serialized in emit()); a long or killed run keeps everything sent.
     g_sendResult = [this](const unsigned char* s, int aut) { if (resultCallback) resultCallback(cbClass, s, aut, 1, 2); };   // |Aut| rides the callback's free r4 slot
     g_checkCanonMode1 = [this](const unsigned char* s) { return resultCallback ? resultCallback(cbClass, s, 0, 1, 1) : false; };  // mode 1 = cnvCheckNew check only, no record
-    g_canonDiag = (std::getenv("REP_CANONDIAG") != nullptr);   // [DIAG] count raw covers already canonical per cnvCheckNew
+    // [DIAG] REP_CANONDIAG counted raw covers already canonical per the MAIN canonizer -- but that
+    // canonizer is Tt4's cnvCheckNew, and KnA2 links no canonizer at all: here the mode-1 probe
+    // reaches p1f.cpp's saveResult, which returns true for every mode != 2. So the probe always
+    // said "canonical", the readout always printed 100.000%, and it measured nothing. Refuse the
+    // flag instead of reporting that number. Restoring it needs a canonizer in this repo.
+    static bool canonDiagSaid = false;   // this runs once per REP_ORDERS token; say it once
+    if (std::getenv("REP_CANONDIAG") && !canonDiagSaid) {
+        canonDiagSaid = true;
+        printf("[K16-REP]  REP_CANONDIAG: NOT SUPPORTED in KnA2 -- no canonizer is linked here, the\n"
+               "[K16-REP]  mode-1 probe is a stub that always answers yes. Ignored (it reported 100%% either way).\n");
+    }
+    g_canonDiag = false;
     g_rawCanonTot.store(0); g_rawCanonPass.store(0);
     g_t0 = std::chrono::steady_clock::now();
     g_last_print = g_t0;
