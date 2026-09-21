@@ -20,8 +20,12 @@ Every class below is pairwise non-isomorphic, and each census is complete for it
 | K16 | \|Aut\| > 1 | 89 | 2:59, 3:19, 5:5, 7:4, 14:1, 15:1 |
 | K18 | \|Aut\| > 1 | 10,710 | 2:10179, 3:351, 4:144, 8:22, 16:12, 17:1, 272:1 |
 | K20 | \|Aut\| > 3 | 230 | 6:168, 9:46, 18:9, 19:3, 57:1, 171:2, 342:1 |
+| K20 | \|Aut\| = 3 | 149,606 | 3:149606 |
 
-The catalogues are in [`AllResults/`](AllResults/), one file per graph, in the format every run of
+The two K20 rows are disjoint, so together they are every K20 class with \|Aut\| >= 3. No atomic
+Latin square arises from the \|Aut\| = 3 half.
+
+The catalogues are in [`AllResults/`](AllResults/), one file per scope, in the format every run of
 this engine writes: a `#N |Aut| = k` header followed by the factor rows. Records are sorted
 ascending by canonical form and numbered contiguously from 1, so **a record number is a position,
 not a name** — new classes are appended, never inserted.
@@ -63,7 +67,10 @@ Cite the **version** DOI whenever a record number is involved:
 |---|---|
 | K18, \|Aut\| > 1 — complete catalogue | [10.5281/zenodo.22238984](https://doi.org/10.5281/zenodo.22238984) |
 | K20, \|Aut\| > 3 — complete catalogue | [10.5281/zenodo.22215011](https://doi.org/10.5281/zenodo.22215011) |
+| K20, \|Aut\| = 3 — complete catalogue | [10.5281/zenodo.22880728](https://doi.org/10.5281/zenodo.22880728) |
 | K17,17 perfect 1-factorizations, from the K18 catalogue | [10.5281/zenodo.22548329](https://doi.org/10.5281/zenodo.22548329) |
+
+The two K20 datasets are disjoint: together they are every class with \|Aut\| >= 3.
 
 ## Build
 
@@ -111,7 +118,7 @@ how long it takes. Run one by executing its `run.bat` — nothing else needs con
 | `runs/K18/K18-t8-a0`, `K18-t9-a0`, `K18-t9-a4` | the three K18 \|Aut\| = 2 strata |
 | `runs/K20/K20Aut4-All` | the K20 \|Aut\| > 3 classification, by group size |
 | `runs/K20/K20Aut4-NoSkip` | the same result re-derived by search instead of by theorem |
-| `runs/K20/K20Aut3` | the K20 order-3 cell, swept in 104 independent blocks — **in progress** (76 of 104 done); its \|Aut\| = 3 classes will be appended to the K20 catalogue when it completes |
+| `runs/K20/K20Aut3` | the K20 order-3 cell, swept in 104 independent blocks — **complete** (2026-09-21); its 149,606 \|Aut\| = 3 classes are `AllResults/K20_P1F_aut_eq3.txt.gz` |
 
 Runtimes span seconds to days; the K18 \|Aut\| = 2 strata and the K20 order-3 cell are the long
 ones, and both are designed to be split across machines. Read the case's `ReadMe.md` first.
