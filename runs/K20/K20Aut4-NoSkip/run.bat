@@ -95,6 +95,27 @@ IF NOT "%RCB%"=="0" echo %CASE%: phase B stopped, exit code %RCB%
 SET "RC=%RCA%"
 IF NOT "%RCB%"=="0" SET "RC=%RCB%"
 
+REM ---- catalogue check -------------------------------------------------------
+REM  A PASS here writes nothing, so this check is a GUARD rather than the usual
+REM  verification: if either phase ever does emit a class, say at once whether it
+REM  is one the catalogue already knows or something genuinely new.  Empty files
+REM  are reported Ok, which is the expected outcome.
+IF NOT "%RC%"=="0" GOTO :CHECK_DONE
+CALL "%P1F_ROOT%\tools\findperl.bat" && GOTO :CHECK_RUN
+echo.
+echo %CASE%: perl was not found on PATH, so the catalogue check did not run.
+echo %CASE%: the results are complete and correct -- only the check was skipped.
+echo %CASE%: check them now with
+echo %CASE%:     perl %P1F_ROOT%\tools\compare_to_catalog.pl --n 20 result_a.txt result_b.txt
+GOTO :CHECK_DONE
+:CHECK_RUN
+"%PERL%" "%P1F_ROOT%\tools\compare_to_catalog.pl" --n 20 "result_a.txt" "result_b.txt"
+REM  2 = the catalog is not in the repository, which is not a fault in the run.
+REM  IF ERRORLEVEL n means "n or higher", so the 2 test has to come first.
+IF ERRORLEVEL 2 GOTO :CHECK_DONE
+IF ERRORLEVEL 1 SET "RC=3"
+:CHECK_DONE
+
 echo.
 echo %CASE%: PASS requires BOTH "= TOTAL" rows in %CASE%.log to read 0 classes,
 echo %CASE%: and both result_a.txt and result_b.txt to be empty.
