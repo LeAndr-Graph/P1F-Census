@@ -181,6 +181,20 @@ If you use the catalogues, cite the dataset DOI for the graph in question, for e
 > automorphism group: a complete catalogue* (Version 1.0.0) [Data set]. Zenodo.
 > https://doi.org/10.5281/zenodo.22238984
 
+## Questions, corrections and reproductions
+
+Please [open an issue](https://github.com/LeAndr-Graph/P1F-Census/issues). That is the right place
+for all of:
+
+- a class you believe is missing from a catalogue, or one you believe should not be there;
+- a run of your own that disagrees with what a case says it should produce — the log and the
+  `run.bat` settings you used are what make that diagnosable;
+- a build that fails, or a question about what a scope statement covers.
+
+A catalogue is only worth what it can be checked against, so a reproduction that disagrees is more
+useful to us than one that agrees. If you would rather not do it in public, the corresponding
+author is reachable through the ORCID record linked below.
+
 ## Authors
 
 Andrei V. Ivanov ([0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716)) and

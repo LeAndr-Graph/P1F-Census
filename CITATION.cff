@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+title: "P1F-Census: perfect one-factorizations of K14-K20 with non-trivial automorphisms"
+message: >-
+  This repository holds the search engine and the run scripts. If you use a
+  CATALOGUE, cite the Zenodo dataset DOI for the graph in question rather than
+  this repository -- record numbers are positions within a published version,
+  and only the dataset DOIs pin them. The four datasets are listed under
+  identifiers below.
+type: software
+authors:
+  - family-names: Ivanov
+    given-names: Andrei V.
+    orcid: "https://orcid.org/0000-0002-1574-6716"
+  - family-names: Tertitski
+    given-names: Leonid M.
+    orcid: "https://orcid.org/0009-0002-7556-9552"
+repository-code: "https://github.com/LeAndr-Graph/P1F-Census"
+license: MIT
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.22238984
+    description: "K18, |Aut| > 1 -- complete catalogue (10,710 classes)"
+  - type: doi
+    value: 10.5281/zenodo.22215011
+    description: "K20, |Aut| > 3 -- complete catalogue (230 classes)"
+  - type: doi
+    value: 10.5281/zenodo.22880728
+    description: "K20, |Aut| = 3 -- complete catalogue (149,606 classes)"
+  - type: doi
+    value: 10.5281/zenodo.22548329
+    description: "K17,17 perfect 1-factorizations, from the K18 catalogue (104,088 classes)"
+keywords:
+  - perfect one-factorization
+  - one-factorization
+  - complete graph
+  - automorphism group
+  - exhaustive classification
+  - combinatorial design
+  - Latin square
