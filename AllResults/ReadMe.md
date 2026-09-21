@@ -12,9 +12,14 @@ have to be looked up:
 | `K14_P1F_aut_gt1.txt` | `\|Aut\| > 1` | K14's order-2 leg finishes, so the classification is complete |
 | `K16_P1F_aut_gt1.txt` | `\|Aut\| > 1` | since 2026-09-01: `runs\K16Aut2` harvests the 59 `\|Aut\| = 2` classes in 7 minutes |
 | `K18_P1F_aut_gt1.txt` | `\|Aut\| > 1` | the `\|Aut\| = 2` half comes from the three block-driven census cases |
-| `K20_P1F_aut_gt3.txt` | `\|Aut\| > 3` | `\|Aut\| = 3` is the one cell no theorem settles; its census (`runs\K20\K20Aut3`, 104 blocks) is in progress, 76 blocks done, and its classes will be appended when it completes |
+| `K20_P1F_aut_gt3.txt` | `\|Aut\| > 3` | the cells the theorems settle |
+| `K20_P1F_aut_eq3.txt.gz` | `\|Aut\| = 3` | the one cell no theorem settles. Its census (`runs\K20\K20Aut3`, 104 blocks) **completed 2026-09-21**. Gzipped: the file is 206 MB, over GitHub's 100 MB limit |
 
-**All four are complete for the scope they state.** K18's `|Aut| = 2` half stopped growing on
+K20 is the one size that takes two files. They are **disjoint** -- `= 3` and `> 3` -- so together
+they are every K20 P1F class with `|Aut| >= 3`, and concatenating them needs no dedup. K20 has no
+`aut_gt1` catalog because `|Aut| = 2` is still out of reach.
+
+**All five are complete for the scope they state.** K18's `|Aut| = 2` half stopped growing on
 2026-09-01, when the last open stratum -- type 9, `a = 4` -- finished and found nothing the
 catalog did not already have.
 
@@ -48,6 +53,27 @@ produced which class, and that is recoverable only by re-deriving it.
 | `K16_P1F_aut_gt1.txt` | 89 | 89 | `{2:59, 3:19, 5:5, 7:4, 14:1, 15:1}` |
 | `K18_P1F_aut_gt1.txt` | 10,710 | 10,710 | `{2:10179, 3:351, 4:144, 8:22, 16:12, 17:1, 272:1}` |
 | `K20_P1F_aut_gt3.txt` | 230 | 230 | `{6:168, 9:46, 18:9, 19:3, 57:1, 171:2, 342:1}` |
+| `K20_P1F_aut_eq3.txt.gz` | 149,606 | 149,606 | `{3:149606}` |
+
+`K20_P1F_aut_eq3.txt.gz` unpacks to 205.9 MB; md5 of the gzip is
+`c572399252609d5348288f6a9ad8926f`, of the file inside `68efe2ea579f43087aa087830b83fd0c`.
+
+### The `|Aut| = 3` census
+
+Every K20 P1F class whose automorphism group has order exactly 3. The search partitions the
+`3^6.1^2` cell into 104 level-1 blocks and sweeps all of them; the last finished 2026-09-21. A
+class sits in several blocks, so the 104 runs emit 582,900 records for 149,833 distinct classes
+(mean multiplicity 3.9), of which 149,606 have `|Aut| = 3` and the other 227 are already in
+`K20_P1F_aut_gt3.txt`.
+
+Those 227 are the check on the whole sweep. They are exactly the `> 3` classes whose order is
+divisible by 3, and they come back **identical, as the same canonical forms** -- 227 in both,
+none in either alone. The three the sweep does not find are the `|Aut| = 19` classes, and 3 does
+not divide 19.
+
+**No atomic Latin square has `|Aut| = 3`.** Scanning all 149,606 classes gives zero, over
+2,992,120 symbol-Hamiltonicity checks and no validation failure. Every atomic K20 square found so
+far has `|Aut| > 3` and is in the other file.
 
 **Two of them are published datasets with DOIs** (2026-09-01). Cite the *version* DOI wherever a
 record number appears -- record numbers are positions within a version:
@@ -61,6 +87,11 @@ The deposited copies are byte-identical to the files here -- md5
 `2676a03f897bf09f2263246bfbd24f53` and `a415a57c6e0d7314b70dd5d69ebcd648`. If either file is ever
 edited, the published record and this folder diverge, and the record numbers cited in the papers
 stop matching; treat that as a reason not to edit them. Deposit paperwork is in `zenodo\`.
+
+`K20_P1F_aut_eq3.txt.gz` is **not yet deposited**. When it is, the uncompressed file goes to
+Zenodo rather than the gzip: 206 MB is nothing against Zenodo's 50 GB limit, and a plain text
+file stays readable there without tooling. The gzip exists only because GitHub refuses the file
+at full size.
 
 The three smaller ones were assembled the same way -- dedup on the canonical form, sort on it,
 emit with the header -- by a script kept outside this repository, K14 and K20 on 2026-08-30 from
