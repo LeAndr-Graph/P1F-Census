@@ -2,8 +2,7 @@
 
 ## Authors
 
-Andrei V. Ivanov, ORCID [0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716), died September 2026.
-
+Andrei V. Ivanov, ORCID [0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716), died September 2026.<br>
 Leonid M. Tertitski, ORCID [0009-0002-7556-9552](https://orcid.org/0009-0002-7556-9552).
 
 Exhaustive, isomorph-free classification of **perfect one-factorizations** (P1Fs) of complete
