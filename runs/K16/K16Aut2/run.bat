@@ -82,12 +82,20 @@ echo %CASE%: again to check them, or check them now with
 echo %CASE%:     perl %P1F_ROOT%\tools\compare_to_catalog.pl --n 16 %RESULT%
 GOTO :CHECK_DONE
 :CHECK_RUN
-"%PERL%" "%P1F_ROOT%\tools\compare_to_catalog.pl" --n 16 "%RESULT%"
+REM  The check writes to a temporary file so its verdict can go to BOTH the
+REM  console and the log; %LOG% holds the engine's output alone otherwise, and
+REM  the Compare line is what makes a disagreeing run diagnosable.
+SET "CHKOUT=%TEMP%\%CASE%_check.txt"
+"%PERL%" "%P1F_ROOT%\tools\compare_to_catalog.pl" --n 16 "%RESULT%" > "%CHKOUT%" 2>&1
+SET "CHKRC=%ERRORLEVEL%"
+TYPE "%CHKOUT%"
+TYPE "%CHKOUT%" >> "%LOG%"
+DEL /Q "%CHKOUT%" 2>nul
 REM  2 = the catalog file is not in the repository yet, so there was nothing to look up in.
 REM  That is not a fault in the run and must not fail the bat; only 1, a real Fault, does.
-REM  IF ERRORLEVEL n means "n or higher", so the 2 test has to come first.
-IF ERRORLEVEL 2 GOTO :CHECK_DONE
-IF ERRORLEVEL 1 SET "RC=3"
+REM  GEQ 2 has to come first, for the same reason IF ERRORLEVEL did.
+IF %CHKRC% GEQ 2 GOTO :CHECK_DONE
+IF %CHKRC% GEQ 1 SET "RC=3"
 :CHECK_DONE
 
 echo.

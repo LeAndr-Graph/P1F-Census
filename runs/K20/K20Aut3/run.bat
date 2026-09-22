@@ -101,11 +101,19 @@ IF ERRORLEVEL 1 (
     echo %CASE%: could not build the reference -- the check was skipped, the results are unaffected.
     GOTO :CHECK_DONE
 )
-"%PERL%" "%P1F_ROOT%\tools\compare_to_catalog.pl" --against "%CATTMP%" "%RESULT%"
+REM  The check writes to a temporary file so its verdict can go to BOTH the
+REM  console and the log; %LOG% holds the engine's output alone otherwise, and
+REM  the Compare line is what makes a disagreeing run diagnosable.
+SET "CHKOUT=%TEMP%\%CASE%_check.txt"
+"%PERL%" "%P1F_ROOT%\tools\compare_to_catalog.pl" --against "%CATTMP%" "%RESULT%" > "%CHKOUT%" 2>&1
+SET "CHKRC=%ERRORLEVEL%"
+TYPE "%CHKOUT%"
+TYPE "%CHKOUT%" >> "%LOG%"
+DEL /Q "%CHKOUT%" 2>nul
 REM  2 = there was nothing to look up in, which is not a fault in the run.
-REM  IF ERRORLEVEL n means "n or higher", so the 2 test has to come first.
-IF ERRORLEVEL 2 GOTO :CHECK_CLEAN
-IF ERRORLEVEL 1 SET "RC=3"
+REM  GEQ 2 has to come first, for the same reason IF ERRORLEVEL did.
+IF %CHKRC% GEQ 2 GOTO :CHECK_CLEAN
+IF %CHKRC% GEQ 1 SET "RC=3"
 :CHECK_CLEAN
 DEL /Q "%CATTMP%" 2>nul
 :CHECK_DONE
