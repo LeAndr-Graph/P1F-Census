@@ -1,5 +1,11 @@
 # P1F-Census
 
+## Authors
+
+Andrei V. Ivanov, ORCID [0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716), died September 2026.
+
+Leonid M. Tertitski, ORCID [0009-0002-7556-9552](https://orcid.org/0009-0002-7556-9552).
+
 Exhaustive, isomorph-free classification of **perfect one-factorizations** (P1Fs) of complete
 graphs with non-trivial automorphism group, for K14, K16, K18 and K20 — the engine that produced
 the published catalogues, the run scripts that reproduce them, and the catalogues themselves.
@@ -193,14 +199,7 @@ for all of:
 
 A catalogue is only worth what it can be checked against, so a reproduction that disagrees is more
 useful to us than one that agrees. If you would rather not do it in public, the corresponding
-author is reachable through the ORCID record linked below.
-
-## Authors
-
-Andrei V. Ivanov ([0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716)) and
-Leonid M. Tertitski ([0009-0002-7556-9552](https://orcid.org/0009-0002-7556-9552)).
-
-[`AUTHORS`](AUTHORS) says what is joint work and which lists are the ones of record.
+author is reachable through the ORCID record linked at the top.
 
 ## License
 
