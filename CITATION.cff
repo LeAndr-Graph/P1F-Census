@@ -16,6 +16,7 @@ authors:
     orcid: "https://orcid.org/0009-0002-7556-9552"
 repository-code: "https://github.com/LeAndr-Graph/P1F-Census"
 license: MIT
+date-released: "2026-09-21"
 identifiers:
   - type: doi
     value: 10.5281/zenodo.22238984

@@ -1,0 +1,17 @@
+P1F-Census -- authors
+
+Andrei V. Ivanov     ORCID 0000-0002-1574-6716
+Leonid M. Tertitski  ORCID 0009-0002-7556-9552
+
+Both are authors of the work this repository publishes. The search engine under
+source/ is joint work by the two of them, developed before this repository was
+made public; the run scripts, the regression suite and the catalogues under
+AllResults/ come from that same work.
+
+Authorship of record is CITATION.cff, together with the creator list of each
+Zenodo dataset the catalogues mirror -- the dataset DOIs are in the README.
+Those are the lists to cite. Git commit metadata records who committed a
+change, which is a different question and not a statement of authorship.
+
+Leonid M. Tertitski is the corresponding author, reachable through the ORCID
+record above.
