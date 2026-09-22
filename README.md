@@ -200,6 +200,8 @@ author is reachable through the ORCID record linked below.
 Andrei V. Ivanov ([0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716)) and
 Leonid M. Tertitski ([0009-0002-7556-9552](https://orcid.org/0009-0002-7556-9552)).
 
+[`AUTHORS`](AUTHORS) says what is joint work and which lists are the ones of record.
+
 ## License
 
 Source code: MIT, see [`LICENSE`](LICENSE). The catalogue files under `AllResults/` are data, not
