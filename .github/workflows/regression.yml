@@ -1,0 +1,49 @@
+name: regression
+
+# Builds the engine on a clean Windows machine and runs the regression suite.
+# The suite is seconds-to-minutes; the census cases under runs\ are hours to
+# days and are never run here.
+#
+# The runner images Visual Studio 2022, not 2026, so the build passes
+# PlatformToolset=v143 -- the alternative the README documents. That makes this
+# job the check on the README's claim that both toolsets pass the suite.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: perl is on PATH
+        shell: cmd
+        run: perl -v
+
+      - name: build (Release^|x64, toolset v143)
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe`) do set "MSBUILD=%%i"
+          if not defined MSBUILD echo MSBuild not found & exit /b 1
+          "%MSBUILD%" p1f.sln -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=v143
+
+      - name: regression suite
+        shell: cmd
+        # < nul so the closing pause in run_all.bat and in each case bat returns
+        # at once; a runner has no console to press a key at.
+        run: regression\run_all.bat < nul
+
+      - name: the catalogue check's verdict reaches the log
+        shell: cmd
+        # The log is the engine's transcript; the Compare line is appended to it
+        # after the check runs. findstr exits 1 when the line is absent, which
+        # fails the step -- that is the assertion.
+        run: |
+          runs\K14\K14-t6-a0\run.bat < nul
+          findstr /C:"Compare Ok" runs\K14\K14-t6-a0\K14-t6-a0.log
