@@ -7,7 +7,7 @@ Leonid M. Tertitski, ORCID [0009-0002-7556-9552](https://orcid.org/0009-0002-755
 
 ## Abstract
 
-Exhaustive, isomorph-free classification of **perfect one-factorizations** (P1Fs) of complete
+Exhaustive, isomorph-free classification of **perfect one-factorizations** (perfect 1-factorizations, P1Fs) of complete
 graphs with non-trivial automorphism group, for K14, K16, K18 and K20 — the engine that produced
 the published catalogues, the run scripts that reproduce them, and the catalogues themselves.
 
