@@ -1,4 +1,4 @@
-# P1F-Census
+# P1F-Census: Perfect 1-Factorizations of K18 and K20 with Non-Trivial Automorphisms
 
 ## Authors
 
