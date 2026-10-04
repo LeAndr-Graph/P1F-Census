@@ -1,5 +1,7 @@
 # P1F-Census: Perfect 1-Factorizations of K18 and K20 with Non-Trivial Automorphisms
 
+**Repository (source code, run scripts, catalogues):** <https://github.com/LeAndr-Graph/P1F-Census>
+
 ## Authors
 
 Andrei V. Ivanov, ORCID [0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716), died September 2026.<br>
