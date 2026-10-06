@@ -1357,7 +1357,8 @@ struct RepWorker {
             long long cdet = ++g_harvest[key];
             if (cdet == 1) {
                 g_f1.fetch_add(1, std::memory_order_relaxed); g_banked.store((int)g_harvest.size(), std::memory_order_relaxed);
-                if (std::getenv("REP_BLOCKDUMP")) {   // [DIAG] the first-found "block" = F1/F2/F3 commit prefix of each distinct class
+                static const bool blockDump = std::getenv("REP_BLOCKDUMP") != nullptr;   // [PERF] read once, like k18's REP_DUMPFIRST
+                if (blockDump) {   // [DIAG] the first-found "block" = F1/F2/F3 commit prefix of each distinct class
                     std::string b;
                     for (int fi = 0; fi < NM && fi < (int)chosen.size(); fi++) { for (int u = 0; u < N; u++) if (u < chosen[fi][u]) { char t[12]; snprintf(t, sizeof(t), "%d-%d ", u, (int)chosen[fi][u]); b += t; } b += "| "; }
                     printf("[BLOCK] |Aut|=%-3d F1F2F3= %s\n", lastAut / 2, b.c_str()); fflush(stdout);
