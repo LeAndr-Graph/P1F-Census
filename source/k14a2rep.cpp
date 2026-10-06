@@ -979,6 +979,7 @@ bool g_f17dump = false;
 std::atomic<long long> g_f17Total{ 0 };
 std::atomic<long long> g_f17NextSec{ 60 };
 bool g_lvlStats = false;                             // REP_LEVELSTATS: per-level node-count histogram (branching/success profile)
+bool g_canonTest = false, g_vTest = false, g_fTest = false;   // REP_CANONTEST / REP_VTEST / REP_FTEST, read ONCE: a getenv() per cover() node cost ~4x on K16 order 2
 std::atomic<long long> g_lvlReached[NM + 2];         // nodes reached at each level (chosen.size()); branching[m]=reached[m+1]/reached[m]
 std::mutex g_f17_mtx;
 // [PORT from k18a2rep] REP_PRUNELEVEL / REP_PATSTAT / REP_PATONLY -- single-pattern completeness test.
@@ -1615,7 +1616,7 @@ struct RepWorker {
         // [CANONTEST] REP_CANONTEST: validate the brute C(sigma0) smallest-image is a CLASS INVARIANT
         // on real partial covers -- canonC_brute(g.P) must equal canonC_brute(P) for every g in C(sigma0).
         // Bounded to the first ~50 partials so the self-check run stays a few seconds.
-        if (std::getenv("REP_CANONTEST") && !chosen.empty() && !sh->Calpha.empty()) {
+        if (g_canonTest && !chosen.empty() && !sh->Calpha.empty()) {
             static std::atomic<int> budget{ 50 };
             if (budget.fetch_sub(1) > 0) {
                 const std::vector<Perm>& C = sh->Calpha;
@@ -1637,7 +1638,7 @@ struct RepWorker {
 
         // [VTEST] REP_VTEST: validate the vertex-order minimal image canonV_brute is a CLASS INVARIANT
         // (canonV_brute(g.P) == canonV_brute(P) for g in C(sigma0)) -- the oracle for the fast backtracking.
-        if (std::getenv("REP_VTEST") && !chosen.empty() && !sh->Calpha.empty()) {
+        if (g_vTest && !chosen.empty() && !sh->Calpha.empty()) {
             static std::atomic<int> vbudget{ 50 };
             if (vbudget.fetch_sub(1) > 0) {
                 const std::vector<Perm>& C = sh->Calpha;
@@ -1660,7 +1661,7 @@ struct RepWorker {
         }
 
         // [FTEST] REP_FTEST: validate the FAST backtracking minimal image == the brute oracle, on real partials.
-        if (std::getenv("REP_FTEST") && !chosen.empty() && !sh->Calpha.empty()) {
+        if (g_fTest && !chosen.empty() && !sh->Calpha.empty()) {
             static std::atomic<int> fbudget{ 200 };
             if (fbudget.fetch_sub(1) > 0) {
                 Perm rho = buildRhoStd(sh->alpha);
@@ -2531,6 +2532,7 @@ void K14A2::runRepresentativeMethod(int order, int target) {
     g_aut2Only = std::getenv("REP_F3COMPLETE") != nullptr;
     g_f17dump = std::getenv("REP_F17DUMP") != nullptr;   // [DIAG] forced-last-factor obstruction sampler
     g_lvlStats = std::getenv("REP_LEVELSTATS") != nullptr;   // [DIAG] per-level node-count / branching profile
+    g_canonTest = std::getenv("REP_CANONTEST") != nullptr; g_vTest = std::getenv("REP_VTEST") != nullptr; g_fTest = std::getenv("REP_FTEST") != nullptr;   // [DIAG] cover() self-checks
     if (g_lvlStats) for (int i = 0; i < NM + 2; i++) g_lvlReached[i].store(0);
     g_pruneMaxFactors = 0;   // [PORT] REP_PRUNELEVEL: skip per-node setwiseStab once >= this many factors committed (0 = prune everywhere)
     if (const char* e = std::getenv("REP_PRUNELEVEL")) g_pruneMaxFactors = atoi(e);
