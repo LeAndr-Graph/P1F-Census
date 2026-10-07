@@ -1,5 +1,30 @@
 # `AllResults\` -- the catalogs a finished run is checked against
 
+## Definitions
+
+A *one-factorization* of K<sub>2n</sub> partitions the edges into 2n−1 perfect matchings
+(*factors*). It is **perfect** when the union of every pair of distinct factors is a single
+Hamiltonian cycle. Folding a P1F at a vertex gives a symmetric Latin square of order 2n−1, which
+is *atomic* exactly when the factorization is perfect and the fold has no proper subsquare — so
+this census also settles which atomic Latin squares of orders 17 and 19 arise this way.
+
+## Format and record numbers
+
+Each catalog is in the format every run of this engine writes: a `#N |Aut| = k` header followed
+by the factor rows. Records are sorted ascending by canonical form and numbered contiguously from
+1, so **a record number is a position, not a name** — new classes are appended, never inserted.
+Cite the Zenodo **version** DOI whenever a record number is involved.
+
+## Notable K18 records
+
+Two of the 10,710 K18 classes fold to atomic Latin squares of order 17, both previously known:
+**#9323**, the classical AGL(1,17) factorization with |Aut| = 272, and **#9527**, the even-starter
+square of Bryant, Maenhaut and Wanless (J. Combin. Theory Ser. A 113 (2006) 608–624). Record
+**#10710** is the cyclic (Skolem-starter) class with |Aut| = 17. No atomic Latin square arises
+from the K20 |Aut| = 3 catalog.
+
+## The files
+
 This folder holds **one catalog per size**: K14, K16, K18 and K20. Every case in `runs\` finishes
 by looking its own results up in the catalog for its N -- `compare_to_catalog.pl --n <N>` picks it
 -- so a run tells you whether what it found is already known without anyone comparing files by hand.
