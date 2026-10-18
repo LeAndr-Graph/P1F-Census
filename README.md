@@ -1,5 +1,7 @@
 # P1F-Census: Perfect 1-Factorizations of K18 and K20 with Non-Trivial Automorphisms
 
+**Repository (source code, run scripts, catalogues):** <https://github.com/LeAndr-Graph/P1F-Census>
+
 **K18:** there are exactly **10,710** pairwise non-isomorphic perfect 1-factorizations (P1Fs) of
 K18 with a non-trivial automorphism group (|Aut| > 1).
 
