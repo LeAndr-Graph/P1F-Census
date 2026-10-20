@@ -11,7 +11,7 @@ K18 with a non-trivial automorphism group (|Aut| > 1).
 
 Catalogue: [`AllResults/K18_P1F_aut_gt1.txt`](AllResults/K18_P1F_aut_gt1.txt) ·
 dataset DOI [10.5281/zenodo.22238984](https://doi.org/10.5281/zenodo.22238984) ·
-runs: [`runs/K18/`](runs/K18/) · paper: submitted to *Electron. J. Combin.*
+runs: [`runs/K18/`](runs/K18/) · paper: submitted to *Australas. J. Combin.*
 
 **K20:** there are exactly **149,836** pairwise non-isomorphic P1Fs of K20 with |Aut| >= 3:
 **230** with |Aut| > 3 and **149,606** with |Aut| = 3.
