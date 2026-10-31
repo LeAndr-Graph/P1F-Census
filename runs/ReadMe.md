@@ -5,6 +5,10 @@ find and how long it takes. This file defines the notation those ReadMe files an
 share. Notation used by one graph only is in that graph's folder (`K18/ReadMe.md` for the
 `t8`, `t9` and `a` of the K18 order-2 cases).
 
+Each `run.bat` sets N and the thread count in `RUNARGS` and starts `p1f.exe [N] [kThreads]`
+(N any even number 14..32); everything else is environment variables, all documented in
+[`docs/env_variables.txt`](../docs/env_variables.txt).
+
 ## Case names
 
 `KnAut<k>` searches the classes with an automorphism of order `k` (`K22Aut7`: K22, order 7).
