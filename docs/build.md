@@ -34,7 +34,9 @@ Redistributable* (x64).
 
 Each folder under [`runs/`](../runs/) is one computation: a `run.bat` that sets the environment and
 starts the engine, and a `ReadMe.md` explaining what it searches, what it should find and roughly
-how long it takes. Run one by executing its `run.bat` — nothing else needs configuring.
+how long it takes. Run one by executing its `run.bat` — nothing else needs configuring. The
+notation they share (types, group names such as D8 or A4, shapes) is in
+[`runs/ReadMe.md`](../runs/ReadMe.md).
 
 | Case | What it does |
 |---|---|
