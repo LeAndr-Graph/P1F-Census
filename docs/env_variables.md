@@ -1,5 +1,4 @@
-KnA2 -- run parameters
-======================
+# KnA2 -- run parameters
 
 p1f.exe takes two positional arguments and reads everything else from environment variables,
 which the engine parses itself.
@@ -18,10 +17,9 @@ engines mostly test presence, not content. Clearing one means removing it from t
 Note the shell difference: in cmd, SET REP_PATSTAT= UNSETS the variable, while in bash
 export REP_PATSTAT= sets it to empty, which still counts as present and therefore ON.
 
+## 0. Output files
 
-0. Output files
----------------
-
+```text
 RESULT=<path>           The run's ONE output file. Required -- a run without it stops. One record
                         per distinct class:
 
@@ -86,11 +84,11 @@ REP_PRIORITY=normal     Opt OUT of the below-normal process priority the engine 
                         every free core, and it yields at once to anything you are doing. The
                         first log line says which priority is in force. Anything other than
                         "normal" leaves the default (below normal) in place.
+```
 
+## 1. What gets searched
 
-1. What gets searched
----------------------
-
+```text
 REP_ORDERS=<list>       Comma-separated automorphism orders to classify in one pass, e.g.
                         "4,5,7,17,V4,3". Tokens: V4 = Klein four-group sweep, E9 = C3xC3
                         two-generator sweep, S3 = S3 two-generator sweep. "order:target" adds a
@@ -114,11 +112,11 @@ REP_FPF                 Diagnostic: isolate the fixed-point-free type(s) of the 
 REP_SYMCAP=<n>          Centralizer-enumeration cap (default 2,000,000). A type whose centralizer
                         exceeds it is over-cap and takes the level/shard path instead of direct
                         enumeration. Raise it to force the direct path on a bigger type.
+```
 
+## 2. Search control and speed
 
-2. Search control and speed
----------------------------
-
+```text
 REP_PRECALC             Precalculate, once per block, the list of orbits that are admissible at
                         that block's seed, then walk the block by filtering that list instead of
                         regenerating candidates at every node.
@@ -204,11 +202,11 @@ REP_NOROOTPRUNE         A/B switch: collect the first-orbit tasks with the old u
 REP_DIVE=<budget>       Fast-search mode on an over-cap type: replace the exhaustive walk with
                         backtracking dives of `budget` nodes per restart, each restarting from a
                         fresh random root. Runs until the harvest target or a kill. Not a census.
+```
 
+## 3. Level, range and shard modes
 
-3. Level, range and shard modes
--------------------------------
-
+```text
 REP_LEVEL=<L>           On an over-cap type, enumerate the search tree level by level down to
                         depth L and treat the level-L nodes as blocks.
 
@@ -287,11 +285,11 @@ REP_ROOTCAP=<K>[:raw]   Stop each leg's root walk after K candidates and search 
 REP_SAMPLE=<stride>[:<cap>]
                         Deep-shard RANGE on the enumerable path: seed every stride-th block, at
                         most cap of them. A sample, not a census.
+```
 
+## 4. Order-2 block sweeps (the a.b.c block coordinate)
 
-4. Order-2 block sweeps (the a.b.c block coordinate)
-----------------------------------------------------
-
+```text
 REP_F3COUNT             Fix a and b (canonical Hamiltonian F2), then count the level-3 blocks --
                         the c of the a.b.c coordinate. Prints raw and canonical starter counts.
 REP_F3A=<n>             Which level-1 seed representative is the "a" column (0..reps-1; a=0 is
@@ -340,14 +338,15 @@ REP_OWNERALL            With REP_OWNER: print one [OWNER] line per rejected cove
 
 REP_BLOCKSFOR=<c>       List every raw c that shares this block's level-3 canonical form.
 REP_CDUMP=<file>        Dump the distinct canonical c-ranks (the a=4 c-space reference).
+```
 
+## 5. Removed
 
-5. (removed: the k18 navigation, coordinate and locating switches were retired with k18)
+The k18 navigation, coordinate and locating switches were retired with k18.
 
+## 6. Estimates
 
-6. Estimates
-------------
-
+```text
 REP_ESTIMATE=<probes>   Estimate mode: run this many Knuth probes per representative and do NO
                         search. Gives a tree-size estimate for an intractable type.
 REP_ESTFILE             Per-block estimate log, written as k<N>_<type>_step<step>_estimate.txt.
@@ -355,11 +354,11 @@ REP_ESTFILE             Per-block estimate log, written as k<N>_<type>_step<step
 NOTE: the per-block estimate log is not trusted and no test sets it. The figure actually read
 is the Chao1 estimate in the [rep] progress line -- "est-total~N (f1=.. f2=..)" -- and that is
 printed whatever these variables are set to.
+```
 
+## 7. Diagnostics and validation
 
-7. Diagnostics and validation
------------------------------
-
+```text
 REP_WITNESS             Transporter/injectivity check on the canonization (the fatal-direction
                         test): evidence that the canonization does not over-merge classes.
 REP_VTEST               Check the fast backtracking minimal image against the brute
@@ -384,22 +383,22 @@ REP_VOICE=<any but 0>   Speak the outcome once at the end (Windows SAPI): "K <N>
                         ok" after End of job, "Oops. K <N> task error" on any other exit; a crash
                         stays silent. Off by default; env_reset.bat does NOT clear it, so it can be
                         set once in a shell to hear every case bat finish.
+```
 
+## 8. Which engine reads what
 
-8. Which engine reads what
---------------------------
-
+```text
   One engine since 2026-10-25: knA2 reads every variable in this file at every N. Retired with the
   per-N engines (still in git history): REP_CANONDIAG REP_EVENTFILE REP_PRINTRAW
   REP_PRINTEACH REP_DIAGPROBE REP_DIAGSUB REP_PATLEVEL REP_PATSUB REP_ROW4 REP_SWAPCAP
   REP_NOPRUNE REP_F2COUNT REP_F2FIXED REP_F2MAX REP_NAV* REP_COMPLETEPREFIX REP_CPCAP
   REP_PATH* REP_LOCATE REP_CLASSBLOCKS REP_CMAP REP_CANONCOUNT REP_CANONKEY REP_CANONFILE
   REP_REPSCHECK REP_DUMPREPS REP_DUMPFIRST.
+```
 
+## 9. Worked settings
 
-9. Worked settings
-------------------
-
+```text
 The bats under runs and regression are the maintained examples. Each one first CALLs
 env_reset.bat, which clears every variable listed above, and then sets only what its case
 needs. The two most-used combinations:
@@ -411,3 +410,4 @@ needs. The two most-used combinations:
       REP_ORDER=2  REP_ONLYTYPES=9  REP_LEVEL=3  REP_PRUNELEVEL=1
       REP_F3A=4  REP_F3COUNT=1  REP_F3COMPLETE=1  REP_F3START=<c>
       REP_PATAPPLY=oneperpair  REP_TYPEMASK=1  REP_SGEN=1  REP_DIAGPRUNE=8:14
+```

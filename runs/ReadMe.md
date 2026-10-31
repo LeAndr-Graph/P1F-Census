@@ -7,7 +7,7 @@ share. Notation used by one graph only is in that graph's folder (`K18/ReadMe.md
 
 Each `run.bat` sets N and the thread count in `RUNARGS` and starts `p1f.exe [N] [kThreads]`
 (N any even number 14..32); everything else is environment variables, all documented in
-[`docs/env_variables.txt`](../docs/env_variables.txt).
+[`docs/env_variables.md`](../docs/env_variables.md).
 
 ## Case names
 

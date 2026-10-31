@@ -78,7 +78,7 @@ runs/         one folder per computation, grouped by graph
 regression/   fast correctness suite with frozen expected output
 tools/        the check script (a run's results looked up in the catalogue for its N), the
               catalogue builder, and two standalone checks: p1f_check and atomcat
-docs/         this file, theorems.md, env_variables.txt
+docs/         this file, theorems.md, env_variables.md
 AllResults/   the catalogues
 ```
 
@@ -95,5 +95,5 @@ output. Exit code 0 means all passed. Run it after any change to the engine.
 
 The engine takes two positional arguments — `p1f.exe [N] [kThreads]`, N any even number from
 14 to 32 — and reads everything else from environment variables. All of them are documented in
-[`env_variables.txt`](env_variables.txt); the `run.bat` files are the maintained
+[`env_variables.md`](env_variables.md); the `run.bat` files are the maintained
 examples of how they combine.
