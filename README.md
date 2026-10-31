@@ -29,11 +29,13 @@ runs: [`runs/K20/`](runs/K20/)
 **K22:** there are exactly **687** pairwise non-isomorphic P1Fs of K22 with |Aut| > 6,
 |Aut| = {7:536, 10:126, 20:20, 21:3, 110:1, 220:1}.
 Catalogue: [`AllResults/K22_P1F_aut_gt6.txt`](AllResults/K22_P1F_aut_gt6.txt) ·
+dataset DOI [10.5281/zenodo.23840055](https://doi.org/10.5281/zenodo.23840055) ·
 runs and proof of scope: [`runs/K22/`](runs/K22/)
 
 **K24:** there are exactly **561** pairwise non-isomorphic P1Fs of K24 with |Aut| > 3,
 |Aut| = {11:531, 22:21, 23:4, 253:4, 506:1}; four of them give atomic Latin squares of order 23.
 Catalogue: [`AllResults/K24_P1F_aut_gt3.txt`](AllResults/K24_P1F_aut_gt3.txt) ·
+dataset DOI [10.5281/zenodo.23845194](https://doi.org/10.5281/zenodo.23845194) ·
 runs and proof of scope: [`runs/K24/`](runs/K24/)
 
 **K26** (per automorphism type, not by |Aut|): **23** classes with an automorphism of type 25 1 and

@@ -4,7 +4,7 @@ message: >-
   This repository holds the search engine and the run scripts. If you use a
   CATALOGUE, cite the Zenodo dataset DOI for the graph in question rather than
   this repository -- record numbers are positions within a published version,
-  and only the dataset DOIs pin them. The four datasets are listed under
+  and only the dataset DOIs pin them. The six datasets are listed under
   identifiers below.
 type: software
 authors:
@@ -27,6 +27,12 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.22880728
     description: "K20, |Aut| = 3 -- complete catalogue (149,606 classes)"
+  - type: doi
+    value: 10.5281/zenodo.23840055
+    description: "K22, |Aut| > 6 -- complete catalogue (687 classes)"
+  - type: doi
+    value: 10.5281/zenodo.23845194
+    description: "K24, |Aut| > 3 -- complete catalogue (561 classes)"
   - type: doi
     value: 10.5281/zenodo.22548329
     description: "K17,17 perfect 1-factorizations, from the K18 catalogue (104,088 classes)"

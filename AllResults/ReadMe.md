@@ -106,7 +106,7 @@ not divide 19.
 2,992,120 symbol-Hamiltonicity checks and no validation failure. Every atomic K20 square found so
 far has `|Aut| > 3` and is in the other file.
 
-**Three of them are published datasets with DOIs.** Cite the *version* DOI wherever a
+**Five of them are published datasets with DOIs.** Cite the *version* DOI wherever a
 record number appears -- record numbers are positions within a version:
 
 | catalog | version DOI | concept DOI | deposited |
@@ -114,10 +114,13 @@ record number appears -- record numbers are positions within a version:
 | `K18_P1F_aut_gt1.txt` | `10.5281/zenodo.22238984` | `10.5281/zenodo.22238983` | 2026-09-01 |
 | `K20_P1F_aut_gt3.txt` | `10.5281/zenodo.22215011` | `10.5281/zenodo.22215010` | 2026-09-01 |
 | `K20_P1F_aut_eq3.txt.gz` | `10.5281/zenodo.22880728` | `10.5281/zenodo.22880727` | 2026-09-21 |
+| `K22_P1F_aut_gt6.txt` | `10.5281/zenodo.23840055` | `10.5281/zenodo.23840054` | 2026-10-31 |
+| `K24_P1F_aut_gt3.txt` | `10.5281/zenodo.23845194` | `10.5281/zenodo.23845193` | 2026-10-31 |
 
 The deposited copies are byte-identical to the files here -- md5
-`2676a03f897bf09f2263246bfbd24f53`, `a415a57c6e0d7314b70dd5d69ebcd648` and
-`68efe2ea579f43087aa087830b83fd0c`. If any of them is ever edited, the published record and this
+`2676a03f897bf09f2263246bfbd24f53`, `a415a57c6e0d7314b70dd5d69ebcd648`,
+`68efe2ea579f43087aa087830b83fd0c`, `77a3d699458fc065edc75efd897c1a75` and
+`b73510b187526bfa60eacf87fa9665b4`. If any of them is ever edited, the published record and this
 folder diverge, and the record numbers cited in the papers stop matching; treat that as a reason
 not to edit them. Deposit paperwork is in `zenodo\`.
 
