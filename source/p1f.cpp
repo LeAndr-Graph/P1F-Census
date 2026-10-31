@@ -1,22 +1,19 @@
-// p1f -- standalone driver for the |Aut|>1 representative-method engines.
+// p1f -- standalone driver for the |Aut|>1 representative-method engine.
 //
-// The engines (k14a2rep.cpp, k16A2rep.cpp, k18a2rep.cpp, k20a2rep.cpp) sit behind a
-// deliberately small interface. Everything they need is: a FactorParams, a thread count, a fixed-row
-// buffer that init() copies (the rep search never reads it back -- there are no `fixedRows` references
-// in any of the five rep sources), and a result callback. All run configuration is read by the engines
-// themselves from REP_* environment variables, exactly as before.
+// The engine (knA2: include/knA2.h + source/knA2rep.inl, one translation unit per N; it replaced the
+// per-N k14/k16/k18/k20 siblings on 2026-10-25, docs/K22_spec.md) sits behind a deliberately small
+// interface. Everything it needs is: a FactorParams, a thread count, a fixed-row buffer that init()
+// copies (the rep search never reads it back), and a result callback. All run configuration is read
+// by the engine itself from REP_* environment variables.
 //
-//   p1f.exe [N] [kThreads]      N = 14 | 16 | 18 | 20; defaults N=18, kThreads=10
+//   p1f.exe [N] [kThreads]      N = even 14..32; defaults N=18, kThreads=10
 //   RESULT=<path>                the run's ONE output file -- required, never appended to
 //
 // A p1f run has exactly one result output, in one format, whatever the mode and whatever N.
 // A user of this tool sees classes and nothing else -- no block coordinates, no stay/swap
 // patterns, no legacy P-file layout. Everything that needs those lives in tools/.
 
-#include "k14a2.h"
-#include "k16A2.h"
-#include "k18a2.h"
-#include "k20a2.h"
+#include "knA2.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +24,8 @@
 #include <windows.h>
 #include <sys/stat.h>   // _stat -- the .exe's mtime is the build stamp
 #include <ctime>
+#include <cwchar>
+#include <sapi.h>       // REP_VOICE: Windows speech (SAPI), as in Tt4
 
 // ---- fixed rows -------------------------------------------------------------------------------
 // The rep method is unseeded (every engine's addRow is a hard error), so these are built here
@@ -69,7 +68,7 @@ static int        g_resCount = 0;
 static int        g_resNP = 0, g_resNM = 0;
 
 static bool saveResult(void* /*cbClass*/, const unsigned char* results, int aut, int /*r5*/, int mode) {
-    // mode 1 is cnvCheckNew's "is this canonical?" probe (REP_CANONDIAG in k16A2rep.cpp), never a
+    // mode 1 is cnvCheckNew's "is this canonical?" probe (REP_CANONDIAG in the retired k16A2rep.cpp), never a
     // record -- the old writer ignored `mode` and emitted a spurious class for every probe.
     if (!g_resFp || mode != 2) return true;
     std::lock_guard<std::mutex> lk(g_resMtx);
@@ -93,7 +92,7 @@ static bool saveResult(void* /*cbClass*/, const unsigned char* results, int aut,
 // ownership is that separately-run ranges write disjoint class sets and so concatenate without a
 // dedup; someone who set REP_OWNER to shard a k14 or k16 sweep and watched it run would believe
 // exactly that, and their `cat` would over-count. So refuse -- here in the host, before RESULT is
-// created: one check covering all five engines, with no way for the siblings to drift apart on it.
+// created: one check covering every N, kept in the host where no engine change can bypass it.
 static bool checkOwnerEnv(int np) {
     const char* owner = std::getenv("REP_OWNER");
     if (owner && owner[0] == '0' && owner[1] == 0) owner = nullptr;   // REP_OWNER=0 asks for LESS, never for a column
@@ -175,7 +174,7 @@ static void printEnv() {
         "REP_OWNER", "REP_OWNERALL", "REP_PRUNELEVEL", "REP_TYPEMASK", "REP_SGEN",
         "REP_DIAGPRUNE", "REP_PATAPPLY", "REP_PATTERN", "REP_INFO", "REP_WITNESS",
         "REP_LOCATE", "REP_COMPLETEPREFIX", "REP_PATHCOORDCANON", "REP_ESTIMATE",
-        "REP_DIAGPROBE", "REP_F17DUMP", "REP_CANONFILE",
+        "REP_DIAGPROBE", "REP_F17DUMP", "REP_CANONFILE", "REP_ROW", "REP_NOROOTPRUNE", "REP_NOSKIP", "REP_VOICE",
     };
     std::string line;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
@@ -185,6 +184,36 @@ static void printEnv() {
         line += names[i]; line += "="; line += v;
     }
     if (!line.empty()) printf("p1f.exe: Requested %s\n", line.c_str());
+}
+
+// REP_VOICE (opt-in; any value but 0): speak the run's outcome once, after RESULT is closed and the
+// closing lines are printed, so it can delay the exit by a few seconds but never touch a result.
+// Off by default because a case bat of 2-minute slices would otherwise talk every 2 minutes, and the
+// laptop's own speech output (OptiKey) shares the speakers. Ported from Tt4's speakText/reportEOJ;
+// unlike Tt4 a COM failure is silent instead of exit(1). env_reset.bat does not clear it.
+#pragma comment(lib, "sapi.lib")
+#pragma comment(lib, "ole32.lib")
+static void speakOutcome(const wchar_t* text) {
+    const char* v = std::getenv("REP_VOICE");
+    if (!v || (v[0] == '0' && v[1] == 0)) return;
+    if (FAILED(::CoInitialize(NULL))) return;
+    ISpVoice* voice = NULL;
+    if (SUCCEEDED(CoCreateInstance(CLSID_SpVoice, NULL, CLSCTX_ALL, IID_PPV_ARGS(&voice)))) {
+        voice->SetVolume(30);
+        voice->Speak(text, 0, NULL);   // synchronous: returns when the sentence is spoken
+        voice->Release();
+    }
+    ::CoUninitialize();
+}
+// Every way out that is not the normal end -- a `return 1` in main, an engine's exit(1) on a refused
+// switch or a failed guard -- passes through atexit, so the error sentence is spoken from there. A crash
+// (access violation) skips atexit and stays silent.
+static int  g_voiceN = 0;
+static bool g_voiceOk = false;
+static void speakErrorAtExit() {
+    if (g_voiceOk) return;
+    wchar_t say[64]; swprintf(say, 64, L"Oops. K %d task error", g_voiceN);
+    speakOutcome(say);
 }
 
 int main(int argc, const char* argv[]) {
@@ -216,6 +245,7 @@ int main(int argc, const char* argv[]) {
     const int np = (argc > 1) ? atoi(argv[1]) : 18;
     int kThreads = (argc > 2) ? atoi(argv[2]) : 10;
     if (kThreads < 1) kThreads = 1;
+    g_voiceN = np; atexit(speakErrorAtExit);   // REP_VOICE: the error report (silent unless REP_VOICE is set)
     if (!checkOwnerEnv(np)) return 1;
     const char* resPath = std::getenv("RESULT");
     if (!resPath || !*resPath) { printf("p1f.exe: RESULT=<path> is required -- it is the run's only output -- stop\n"); return 1; }
@@ -233,19 +263,13 @@ int main(int argc, const char* argv[]) {
     unsigned char fixed[3 * 32] = { 0 };
     KSolver* solver = nullptr;
     switch (np) {
-    case 14: { const FactorParams fp(K14A2::NP, K14A2::NM, K14A2::NFIXED, K14A2::M_MAX, 0);
-               g_resNP = K14A2::NP; g_resNM = K14A2::NM; buildFixedRows(K14A2::NP, K14A2::NFIXED, fixed);
-               solver = new K14A2(fp, 0, kThreads, fixed, saveResult, nullptr, true); break; }
-    case 16: { const FactorParams fp(K16A2::NP, K16A2::NM, K16A2::NFIXED, K16A2::M_MAX, 0);
-               g_resNP = K16A2::NP; g_resNM = K16A2::NM; buildFixedRows(K16A2::NP, K16A2::NFIXED, fixed);
-               solver = new K16A2(fp, 0, kThreads, fixed, saveResult, nullptr, true); break; }
-    case 18: { const FactorParams fp(K18A2::NP, K18A2::NM, K18A2::NFIXED, K18A2::M_MAX, 0);
-               g_resNP = K18A2::NP; g_resNM = K18A2::NM; buildFixedRows(K18A2::NP, K18A2::NFIXED, fixed);
-               solver = new K18A2(fp, 0, kThreads, fixed, saveResult, nullptr, true); break; }
-    case 20: { const FactorParams fp(K20A2::NP, K20A2::NM, K20A2::NFIXED, K20A2::M_MAX, 0);
-               g_resNP = K20A2::NP; g_resNM = K20A2::NM; buildFixedRows(K20A2::NP, K20A2::NFIXED, fixed);
-               solver = new K20A2(fp, 0, kThreads, fixed, saveResult, nullptr, true); break; }
-    default: printf("p1f.exe: N=%d not supported (14, 16, 18, 20) -- stop\n", np); return 1;
+#define KNA2_CASE(n) \
+    case n: { const FactorParams fp(KnA2<n>::NP, KnA2<n>::NM, KnA2<n>::NFIXED, KnA2<n>::M_MAX, 0); \
+              g_resNP = KnA2<n>::NP; g_resNM = KnA2<n>::NM; buildFixedRows(KnA2<n>::NP, KnA2<n>::NFIXED, fixed); \
+              solver = new KnA2<n>(fp, 0, kThreads, fixed, saveResult, nullptr, true); break; }
+    KNA2_FOR_EACH_N(KNA2_CASE)
+#undef KNA2_CASE
+    default: printf("p1f.exe: N=%d not supported (even N, 14..32) -- stop\n", np); return 1;
     }
     solver->solve();
     delete solver;
@@ -254,5 +278,7 @@ int main(int argc, const char* argv[]) {
     printf("p1f.exe: %d result(s) written to %s (Total time=%.0fmin)\n", g_resCount, resPath, totMin);
     printf("End of job\n");   // last line of every completed run: a log that stops short of it was interrupted
     fflush(stdout);
+    g_voiceOk = true;
+    { wchar_t say[64]; swprintf(say, 64, L"K %d task exit ok", np); speakOutcome(say); }
     return 0;
 }

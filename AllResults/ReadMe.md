@@ -25,7 +25,7 @@ from the K20 |Aut| = 3 catalog.
 
 ## The files
 
-This folder holds **one catalog per size**: K14, K16, K18 and K20. Every case in `runs\` finishes
+This folder holds **one catalog per size**: K14, K16, K18, K20, K22, K24 and K26. Every case in `runs\` finishes
 by looking its own results up in the catalog for its N -- `compare_to_catalog.pl --n <N>` picks it
 -- so a run tells you whether what it found is already known without anyone comparing files by hand.
 
@@ -39,12 +39,15 @@ have to be looked up:
 | `K18_P1F_aut_gt1.txt` | `\|Aut\| > 1` | the `\|Aut\| = 2` half comes from the three block-driven census cases |
 | `K20_P1F_aut_gt3.txt` | `\|Aut\| > 3` | the cells the theorems settle |
 | `K20_P1F_aut_eq3.txt.gz` | `\|Aut\| = 3` | the one cell no theorem settles. Its census (`runs\K20\K20Aut3`, 104 blocks) **completed 2026-09-21**. Gzipped: the file is 206 MB, over GitHub's 100 MB limit |
+| `K22_P1F_aut_gt6.txt` | `\|Aut\| > 6` | orders 4, 5 and V4 shape `fx2,0,0 F5` take weeks to months; `runs/K22/ReadMe.md` proves the legs 7, 10, 11, 20 and the six small groups cover `\|Aut\| > 6` |
+| `K24_P1F_aut_gt3.txt` | `\|Aut\| > 3` | order 3 is out of reach on a laptop; `runs/K24/ReadMe.md` proves the legs 23, 11 and S3 cover `\|Aut\| > 3` |
+| `K26_P1F_rot25_24.txt` | an automorphism of type `25 1` or `24 1^2` | per leg, not by `\|Aut\|`: the other K26 legs are out of reach or not estimated (`runs/K26/ReadMe.md`) |
 
 K20 is the one size that takes two files. They are **disjoint** -- `= 3` and `> 3` -- so together
 they are every K20 P1F class with `|Aut| >= 3`, and concatenating them needs no dedup. K20 has no
 `aut_gt1` catalog because `|Aut| = 2` is still out of reach.
 
-**All five are complete for the scope they state.** K18's `|Aut| = 2` half stopped growing on
+**All eight are complete for the scope they state.** K18's `|Aut| = 2` half stopped growing on
 2026-09-01, when the last open stratum -- type 9, `a = 4` -- finished and found nothing the
 catalog did not already have.
 
@@ -58,7 +61,7 @@ its `RESULT` into its own `runs\<case>\` folder.
 
 **The records are not edited.** A catalog is a curated document, produced once from the finished
 case runs, and a class is added only when a run finds one the catalog does not have. Banners and
-summary tables are prose and may be corrected; the records are not touched. All four are tracked in
+summary tables are prose and may be corrected; the records are not touched. All of them are tracked in
 git, and `.gitattributes` pins `AllResults/*.txt` to `-text` so their bytes survive the round trip
 unchanged.
 
@@ -79,6 +82,9 @@ produced which class, and that is recoverable only by re-deriving it.
 | `K18_P1F_aut_gt1.txt` | 10,710 | 10,710 | `{2:10179, 3:351, 4:144, 8:22, 16:12, 17:1, 272:1}` |
 | `K20_P1F_aut_gt3.txt` | 230 | 230 | `{6:168, 9:46, 18:9, 19:3, 57:1, 171:2, 342:1}` |
 | `K20_P1F_aut_eq3.txt.gz` | 149,606 | 149,606 | `{3:149606}` |
+| `K22_P1F_aut_gt6.txt` | 687 | 687 | `{7:536, 10:126, 20:20, 21:3, 110:1, 220:1}` |
+| `K24_P1F_aut_gt3.txt` | 561 | 561 | `{11:531, 22:21, 23:4, 253:4, 506:1}` |
+| `K26_P1F_rot25_24.txt` | 59 | 59 | `{24:36, 25:23}` |
 
 `K20_P1F_aut_eq3.txt.gz` unpacks to 205.9 MB; md5 of the gzip is
 `c572399252609d5348288f6a9ad8926f`, of the file inside `68efe2ea579f43087aa087830b83fd0c`.
@@ -120,7 +126,7 @@ The `|Aut| = 3` record holds the file **uncompressed** -- 206 MB is nothing agai
 only because GitHub refuses a file that size.
 
 The three smaller ones were assembled the same way -- dedup on the canonical form, sort on it,
-emit with the header -- by a script kept outside this repository, K14 and K20 on 2026-08-30 from
+emit with the header -- by `tools\make_catalog.pl`, K14 and K20 on 2026-08-30 from
 a single run of their own `runs\` case, K16 on 2026-09-01 from two: `K16Aut3-All` for the 30 with
 `|Aut| > 2` and `K16Aut2` for the 60 with an involution, which overlap in the one class of
 `|Aut| = 14` -- 90 records read, 1 duplicate, 89 written. This repository publishes the answers
@@ -130,7 +136,32 @@ They carry external corroboration that K18 has none of. K16's 89 is the publishe
 of perfect one-factorizations of K16, and its `|Aut| > 2` part, 30, is the exact literature
 count -- so 30 + 59 = 89 closes the size from both ends, and K16 has no class with a trivial
 automorphism group. K14's 21 is 23 P1Fs less the 2 rigid ones; K20's 230 is its `|Aut| > 3`
-census -- `|Aut| = 3` is a separate, unenumerated cell.
+census -- `|Aut| = 3` is the separate file above.
+
+### K22, K24, K26
+
+These three were built by `tools\make_catalog.pl` (dedup on the canonical form, sort, emit with the
+header) from the RESULT files of their `runs\` cases. Each is checked by `tools\p1f_check` (every
+record a P1F, `|Aut|` recomputed, no class twice: CLEAN on all three), and each case bat checks its
+own result against its catalog.
+
+    perl tools/make_catalog.pl --n 22 --scope "all P1F classes with |Aut| > 6" \
+         AllResults/K22_P1F_aut_gt6.txt runs/K22/K22Aut{7,10,11,20,21}/result.txt
+    records read : 709   duplicates : 22   written : 687
+
+`K22`: `K22AutGroups`, `K22AutS3` and `K22AutV4` (shapes 1, 3) find 0. No class is atomic.
+
+`K24`: one census run of the legs 23, 11 and S3, 561 records, no duplicates; the case bats
+`K24Aut23` (9) and `K24Aut11` (557) overlap in the 5 classes with `|Aut|` 253 and 506, and
+`K24AutS3` finds 0. Four classes are atomic (`tools\atomcat`): `#7` (`|Aut| = 506`, `AGL(1,23)`),
+`#8` (`|Aut| = 22`), `#522` and `#561` (`|Aut| = 253`).
+
+`K26`: the two legs `K26Aut25` (23) and `K26Aut24` (36), no overlap, no atomic class.
+
+**Literature.** Pike and Shalaby (J. Combin. Math. Combin. Comput. 44, 2003) count the
+non-isomorphic P1Fs from starters and from even starters. Ours: K22 3 and 17 (the order-21 and
+order-20 legs), K24 9 and 22 (the order-23 leg; the 21 classes of `|Aut| = 22` plus the 506 one),
+K26 23 and 36 (the two K26 legs). All six match their tables.
 
 The merged K16 file was verified the same way as the deposited catalogues, on 2026-09-01: 89
 records numbered contiguously with no duplicates; every row a perfect matching, every edge once,

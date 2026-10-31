@@ -1,41 +1,31 @@
 // =============================================================================
-// k18a2rep.cpp — automorphism-REPRESENTATIVE method for classifying K18 Perfect
-// 1-Factorizations (P1Fs) by a given automorphism order.
+// knA2rep.inl — automorphism-REPRESENTATIVE method for classifying K_N Perfect
+// 1-Factorizations (P1Fs) by a given automorphism order, for every even N <= 32.
 //
-// Why this exists: the cyclic K18A2 search cannot finish small automorphism
-// orders (L=4, L=2), AND it structurally undercounts even orders that have
-// FIXED-POINT-FREE cycle types (e.g. order-4 4^4 2^1 = 16+2 = 18), because its
-// generator forces vertex 0 to be a fixed point of the automorphism. This module
-// is unseeded and complete: for ONE representative permutation alpha per cycle
-// TYPE of the target order, it finds ALL alpha-invariant P1Fs by an exact cover
-// of the 153 edges with alpha-invariant factor-orbits, then deduplicates across
-// types with a labeling-independent canonical key.
+// ONE source, compiled once per N: source/knA2_<N>.cpp defines KNA2_N and includes
+// this file, so N is a compile-time constant (edge bitset width, table sizes) and each
+// N gets its own anonymous-namespace state. Built from k14a2rep.cpp, whose code is
+// identical to k16A2rep.cpp's (docs/K22_spec.md §2). Comments that name K14 below
+// are the history of the K14 copy this was taken from.
 //
-// Validated (standalone) against known counts: K16 order-5 -> 6, order-7 -> 5,
-// order-15 -> 1; K18 order-17 -> 2 (|Aut| 17,272). Isomorph rejection is by
-// ORDERLY GENERATION: at every cover level the candidate factor-orbits covering
-// the lowest uncovered edge are deduplicated by the current centralizer
-// stabilizer G, and each chosen orbit O recurses with its sub-stabilizer
-// Stab_G(O). Sound for class counting because any g in G = Stab(partial cover)
-// is a class-preserving bijection between sibling subtrees; combined with the
-// shrinking stabilizer chain this collapses the dense high-centralizer types
-// (e.g. order-4 4^4 2^1) that the previous naive lex-leader prune could not
-// terminate. Types whose centralizer exceeds the enumeration cap (sparse, huge
-// S_k on fixed points) fall back to plain recursion + the global canonical key.
+// Ground truth the per-N siblings were validated on (docs/K22_spec.md §5): K14 21
+// classes |Aut|>1, K16 89, K18 |Aut|>1 10,710, K20 |Aut|>3 230.
 //
-// Parallelism: within each cycle type, the independent first-factor-orbit
-// branches are fanned out across `kThreads` worker threads, each with its own
-// search state; the per-type/global dedup is merged after the workers join.
+// Isomorph rejection is by ORDERLY GENERATION: at every cover level the candidate
+// factor-orbits covering the lowest uncovered edge are deduplicated by the current
+// centralizer stabilizer G, and each chosen orbit O recurses with its sub-stabilizer
+// Stab_G(O). Types whose centralizer exceeds the enumeration cap fall back to the
+// generator/work-queue over-cap path (exact Stab_C(P) per node).
 //
 // Integration rules honored here:
-//   * The ONLY entry point is the private member K18A2::runRepresentativeMethod,
-//     called internally from K18A2::runExhaustiveSearch. Everything else lives in
+//   * The ONLY entry point is the private member KnA2::runRepresentativeMethod,
+//     called internally from KnA2::runExhaustiveSearch. Everything else lives in
 //     the anonymous namespace below, so nothing new has external linkage.
-//   * Worker count comes from K18A2::kThreads.
-//   * Every print is gated by K18A2::m_bPrint (forwarded as g_bprint).
+//   * Worker count comes from KnA2::kThreads.
+//   * Every print is gated by KnA2::m_bPrint (forwarded as g_bprint).
 // =============================================================================
 
-#include "k18a2.h"
+#include "knA2.h"
 #include "cgtEngine.h"   // shared computational-group-theory engine (BSGS, edgeStabGens, setwiseStab)
 #include "logTable.h"   // the run log IS a table -- one writer for all four engines
 #include <cstdint>
@@ -65,18 +55,18 @@ std::string printWithPowers(const std::string& str);   // (allSupports.h) render
 namespace {  // everything here is file-local (no external linkage)
 
 // ---- problem-size constants (single knob: N) --------------------------------
-constexpr int N      = 18;             // players / graph vertices (K18)
-constexpr int NM     = N - 1;          // 17 = factors in a 1-factorization
-constexpr int NHALF  = N / 2;          // 9  = edges in one perfect matching (factor)
-constexpr int NEDGES = N * (N - 1) / 2;// 153 = edges of K18
+constexpr int N      = KNA2_N;         // players / graph vertices (compile-time: one translation unit per N)
+constexpr int NM     = N - 1;          // 13 = factors in a 1-factorization
+constexpr int NHALF  = N / 2;          // 7  = edges in one perfect matching (factor)
+constexpr int NEDGES = N * (N - 1) / 2;// edges of K_N (231 at K22, 496 at K32)
 constexpr int INF    = 1 << 20;        // "no edge / not covered" sentinel (> any edge id)
-constexpr uint32_t FULLMASK = (1u << N) - 1;   // bit v = vertex v (uint32 fits every sibling N)
+constexpr uint32_t FULLMASK = (uint32_t)((1ull << N) - 1);   // bit v = vertex v (uint32 fits every sibling N)
 
 typedef std::array<uint8_t, N> Match;  // a factor in adjacency form: m[u] = partner of u
 typedef std::array<uint8_t, N> Perm;   // a vertex permutation: p[u] = image of u
 
 // ---- edge-id tables (filled once by initEdges) ------------------------------
-int     eidT[N][N];          // eidT[u][v] = canonical id (0..152) of edge {u,v}; symmetric
+int     eidT[N][N];          // eidT[u][v] = canonical id (0..90) of edge {u,v}; symmetric
 uint8_t edgeU[NEDGES];       // edgeU[e] = lower  endpoint of edge id e
 uint8_t edgeV[NEDGES];       // edgeV[e] = higher endpoint of edge id e
 
@@ -91,37 +81,14 @@ void initEdges() {
         }
 }
 
-// two factors are "perfect" iff their union is a single Hamiltonian N-cycle.
-// Walk the alternating a/b cycle from vertex 0; the cycle through 0 has even length 2L with
-// L in 1..NHALF, so a SHORT cycle can only close at hops 1..NHALF-1. Surviving all NHALF-1
-// checks forces L=NHALF (the whole N-cycle) => the last hop is guaranteed back to 0, so the
-// final hop AND the final compare are unnecessary: NHALF-1 checks decide it (8 for K18, 7 K16).
+// two factors are "perfect" iff their union is a single Hamiltonian N-cycle
 inline bool is_perfect(const Match& a, const Match& b) {
-    int u = 0;
-    for (int i = 0; i < NHALF - 1; i++) {
-        u = a[u]; u = b[u];
-        if (u == 0) return false;   // closed early => more than one cycle
+    int u = 0;               // walk the alternating a/b cycle from vertex 0 (see k18a2rep note):
+    for (int i = 0; i < NHALF - 1; i++) {   // a short cycle can only close at hops 1..NHALF-1;
+        u = a[u]; u = b[u];                 // surviving all of them forces the last hop back to 0,
+        if (u == 0) return false;           // so the final hop + compare are unnecessary
     }
-    return true;                    // survived NHALF-1 checks => single Hamiltonian N-cycle
-}
-
-// [DIAG] cycle-length partition (sorted, descending) of the 2-regular union of two EDGE-DISJOINT
-// perfect matchings a,b -- the alternating a/b cycles. A single {N} entry means a U b is one
-// Hamiltonian cycle (a,b "perfect", is_perfect==true); >1 entry is the non-Hamiltonicity
-// obstruction. Optionally returns the vertices of the shortest cycle (the tightest clash).
-inline std::vector<int> unionCycleParts(const Match& a, const Match& b, std::vector<int>* shortCyc = nullptr) {
-    bool seen[N]; for (int i = 0; i < N; i++) seen[i] = false;
-    std::vector<int> parts, best;
-    for (int s = 0; s < N; s++) {
-        if (seen[s]) continue;
-        std::vector<int> cyc; int u = s; bool useA = true;
-        do { seen[u] = true; cyc.push_back(u); u = useA ? a[u] : b[u]; useA = !useA; } while (u != s);
-        parts.push_back((int)cyc.size());
-        if (best.empty() || cyc.size() < best.size()) best = cyc;
-    }
-    std::sort(parts.begin(), parts.end(), std::greater<int>());
-    if (shortCyc) *shortCyc = best;
-    return parts;
+    return true;             // survived NHALF-1 checks => single Hamiltonian N-cycle
 }
 
 // image of a factor M under permutation alpha: (alpha M)[alpha u] = alpha(M[u])
@@ -137,12 +104,156 @@ inline Match applyAlpha(const Match& m, const uint8_t* al) {
 inline Perm composePerm(const Perm& a, const Perm& b) { Perm r; for (int x = 0; x < N; x++) r[x] = a[b[x]]; return r; }
 inline Perm invPerm(const Perm& a) { Perm r; for (int x = 0; x < N; x++) r[a[x]] = (uint8_t)x; return r; }
 
-// [CANONV] (sibling of k14a2rep) fast C(sigma0)-minimal-image machinery = the PL-invariant canonical
-// content key for a partial cover (used by REP_PATHCANON starter enumeration and the a.b.c coordinate).
-// buildRhoStd sends the fpf involution sigma0 to standard (0 1)(2 3)...; canonV_fast finds the
-// minimal vertex-order image over C(sigma0)=C2 wr S_{N/2} by backtracking the wreath (permute pairs +
-// within-pair flip) with prefix pruning -- using ONLY sigma0's pair structure, NO Calpha enumeration, so
-// it runs on the over-cap coverGen path (K18 t9 = 2^9, |C|=185M). Validated on K14 vs a brute 645k oracle.
+// Canonical serialization of the alpha-orbit of factor m (the set {m, alpha m, ...}),
+// as the sorted concatenation of the orbit's factors. Used to (a) group first-orbit
+// tasks into C(alpha)-orbits and (b) test whether a centralizer element fixes an orbit.
+// Note g commutes with alpha, so g(orbit of m) == orbit of g(m); hence applying g to m
+// and re-taking the orbit gives g's image of the whole orbit.
+// gEl = the FULL list of non-identity elements of the symmetry group G (cyclic types:
+// alpha^1..alpha^{order-1}; V4: {a, b, ab}), so {m} U {g m} is the whole G-orbit.
+std::string orbitKey(const Match& m, const std::vector<Perm>& gEl) {
+    std::vector<Match> orb;  // the G-orbit of m
+    orb.reserve(gEl.size() + 1);
+    orb.push_back(m);
+    for (const auto& g : gEl) orb.push_back(applyAlpha(m, g.data()));
+    std::sort(orb.begin(), orb.end());
+    orb.erase(std::unique(orb.begin(), orb.end()), orb.end());
+    std::string s; s.reserve(orb.size() * N);
+    for (auto& F : orb) for (int u = 0; u < N; u++) s.push_back((char)F[u]);
+    return s;
+}
+
+// [SETUPKEY] The same orbit identity as orbitKey, as a fixed-size value: the orbit's smallest member.
+// Two G-orbits are equal iff their smallest members are, since orbits partition the matchings.
+Match orbitMinKey(const Match& m, const std::vector<Perm>& gEl) {
+    Match best = m;
+    for (const auto& g : gEl) { Match r = applyAlpha(m, g.data()); if (r < best) best = r; }
+    return best;
+}
+struct MatchHash {   // FNV-1a over the N bytes
+    size_t operator()(const Match& a) const noexcept {
+        uint64_t h = 1469598103934665603ull;
+        for (int i = 0; i < N; i++) { h ^= a[i]; h *= 1099511628211ull; }
+        return (size_t)h;
+    }
+};
+
+// [SETUPMEM] Orbit-key -> task-index table for the root setup, 5 bytes per slot ([PACKTASK]): the task
+// index and an 8-bit fingerprint; the key is NOT stored but recomputed from the task
+// (orbitMinKey(tasks[idx])) whenever the fingerprint matches, so two orbits can never merge. At K22 orders 4 and 5 (58M root
+// tasks) the unordered_map<Match,int>
+// plus the stored keys took ~8 GB on a 16 GB laptop, the fingerprint table ~2.5 GB peak; this ~1 GB.
+// Open addressing, linear probing, load <= 0.75.
+// [SETUPMEM] The root task list in fixed 1M-entry chunks: it grows without the 2x copy a std::vector
+// makes when it reallocates or when per-thread lists are joined into it, and it can be compacted in
+// place. Indexable like a vector (by value); only what the setup needs.
+// [PACKTASK] Each task (a perfect matching) is stored in 8 bytes, not N: walking the lowest free vertex
+// u, the partner's rank among the free vertices above u, in ceil(log2(free-1)) bits (N = 22: 39 bits,
+// N = 32: exactly 64). At K22 orders 4/5 (58M tasks) the list drops from 1.28 GB to 0.46 GB.
+struct PackW { int w[N / 2]; constexpr PackW() : w() { for (int k = 0; k < N / 2; k++) { int r = N - 1 - 2 * k, b = 0; while ((1 << b) < r) b++; w[k] = b; } } };
+constexpr PackW kPackW;
+inline uint64_t packMatch(const Match& m) {
+    uint64_t c = 0; int sh = 0; uint32_t fr = FULLMASK;
+    for (int k = 0; k < N / 2; k++) {
+        unsigned long u; _BitScanForward(&u, fr); const int v = m[u];
+        c |= (uint64_t)__popcnt(fr & ((1u << v) - 1) & ~((2u << u) - 1)) << sh; sh += kPackW.w[k];
+        fr &= ~((1u << u) | (1u << v));
+    }
+    return c;
+}
+inline Match unpackMatch(uint64_t c) {
+    Match m; uint32_t fr = FULLMASK;
+    for (int k = 0; k < N / 2; k++) {
+        unsigned long u; _BitScanForward(&u, fr);
+        uint32_t above = fr & ~((2u << u) - 1);
+        for (uint64_t r = c & ((1ull << kPackW.w[k]) - 1); r; r--) above &= above - 1;
+        c >>= kPackW.w[k];
+        unsigned long v; _BitScanForward(&v, above);
+        m[u] = (uint8_t)v; m[v] = (uint8_t)u; fr &= ~((1u << u) | (1u << v));
+    }
+    return m;
+}
+struct ChunkList {
+    static constexpr size_t CH = (size_t)1 << 20;
+    std::vector<std::unique_ptr<uint64_t[]>> ch;
+    size_t n = 0;
+    size_t size() const { return n; }
+    void pushCode(uint64_t c) { if (n / CH == ch.size()) ch.emplace_back(new uint64_t[CH]); ch[n / CH][n % CH] = c; n++; }
+    void push_back(const Match& m) { pushCode(packMatch(m)); }
+    uint64_t code(size_t i) const { return ch[i / CH][i % CH]; }
+    Match operator[](size_t i) const { return unpackMatch(code(i)); }
+    void moveTo(size_t dst, size_t src) { ch[dst / CH][dst % CH] = code(src); }
+    void shrinkTo(size_t k) { n = k; ch.resize((k + CH - 1) / CH); }   // drop trailing entries and their chunks
+};
+
+// The table: 5 bytes per slot (task index + 1, 0 = empty; an 8-bit key fingerprint), load <= 0.75.
+// [PACKTASK] A probe recomputes the slot's key from its packed task (unpack + |G| images) only when
+// the fingerprint matches: without it the K22 order-4 C-orbit step took 265 s instead of 95 s.
+struct OrbFpTable {
+    std::vector<uint32_t> idx;
+    std::vector<uint8_t> fp;
+    uint64_t mask = 0;
+    const ChunkList* tasks = nullptr;
+    const std::vector<Perm>* gEl = nullptr;
+    static uint64_t hashOf(const Match& k) { uint64_t h = (uint64_t)MatchHash()(k); h ^= h >> 29; h *= 0xBF58476D1CE4E5B9ull; h ^= h >> 32; return h; }
+    static size_t slotsFor(size_t n) { size_t cap = 16; while (cap * 3 < n * 4) cap <<= 1; return cap; }
+    void init(size_t n, const ChunkList* t, const std::vector<Perm>* g) {
+        const size_t cap = slotsFor(n);
+        idx.assign(cap, 0); fp.assign(cap, 0); mask = cap - 1; tasks = t; gEl = g;
+    }
+    // index of the task whose orbit key is k, or -1
+    long long find(const Match& k) const {
+        const uint64_t h = hashOf(k); const uint8_t f = (uint8_t)(h >> 56);
+        for (uint64_t s = h & mask; idx[s]; s = (s + 1) & mask)
+            if (fp[s] == f && orbitMinKey((*tasks)[idx[s] - 1], *gEl) == k) return idx[s] - 1;
+        return -1;
+    }
+    // insert (k -> i) unless k is present; true if inserted
+    bool insert(const Match& k, uint32_t i) {
+        const uint64_t h = hashOf(k); const uint8_t f = (uint8_t)(h >> 56);
+        uint64_t s = h & mask;
+        for (; idx[s]; s = (s + 1) & mask)
+            if (fp[s] == f && orbitMinKey((*tasks)[idx[s] - 1], *gEl) == k) return false;
+        idx[s] = i + 1; fp[s] = f; return true;
+    }
+};
+
+// [CANON] factor-order-independent serialization of a partial cover: each factor -> its sorted
+// edge-id list; the per-factor strings are then sorted, so the result depends only on the SET of
+// factors, not the order they were committed. Basis for the C(sigma0) smallest-image (canonC).
+std::string serPartial(const std::vector<Match>& chosen) {
+    std::vector<std::string> fs; fs.reserve(chosen.size());
+    for (const auto& F : chosen) {
+        std::string s; s.reserve(N / 2);
+        for (int u = 0; u < N; u++) { int v = F[u]; if (u < v) s.push_back((char)eidT[u][v]); }
+        std::sort(s.begin(), s.end());
+        fs.push_back(std::move(s));
+    }
+    std::sort(fs.begin(), fs.end());
+    std::string out; out.reserve(chosen.size() * (N / 2 + 1));
+    for (auto& s : fs) { out += s; out.push_back((char)0xFF); }   // 0xFF: factor separator (edge ids < 91)
+    return out;
+}
+
+// [CANON] BRUTE smallest-image of a partial cover under C(sigma0): min over g in Calpha of
+// serPartial({ applyAlpha(F,g) : F in chosen }). This is the exact ORACLE used to validate the
+// BSGS-pruned canonC (Task 2). Only valid on the ENUMERABLE path (K14: |Calpha| = 645120).
+std::string canonC_brute(const std::vector<Match>& chosen, const std::vector<Perm>& Calpha) {
+    std::string best; bool first = true;
+    std::vector<Match> img(chosen.size());
+    for (const auto& g : Calpha) {
+        for (size_t i = 0; i < chosen.size(); i++) img[i] = applyAlpha(chosen[i], g.data());
+        std::string s = serPartial(img);
+        if (first || s < best) { best = std::move(s); first = false; }
+    }
+    return best;
+}
+
+// [CANONV] rho: the fixed relabeling that sends sigma0 (=alpha, an fpf involution) to STANDARD form
+// (0 1)(2 3)...(N-2 N-1). Its pairs are listed by ascending min-vertex; pair k -> target vertices
+// {2k, 2k+1}. Working in standard coordinates makes C(sigma0) = C2 wr S_{N/2} act by permuting the
+// consecutive vertex-pairs (S_{N/2}) and flipping within a pair (C2) -- the structure the fast
+// backtracking minimal-image exploits. (fpf assumed: no fixed points.)
 inline Perm buildRhoStd(const uint8_t* alpha) {
     // sigma0 = alpha may have FIXED POINTS (type 2^m 1^{N-2m}, e.g. t8 = 2^8 1^2): map its m 2-cycles to
     // standard pairs {2k,2k+1} (k by ascending min-vertex), then its fixed points to the trailing slots
@@ -153,6 +264,36 @@ inline Perm buildRhoStd(const uint8_t* alpha) {
     for (int x = 0; x < N; x++) if (!seen[x]) { rho[x] = (uint8_t)base++; seen[x] = true; }
     return rho;
 }
+
+// [CANONV] vertex-order color-adjacency serialization of a factor set already in TARGET coordinates.
+// Scan edges in increasing-MAX-endpoint order ( for w=1..N-1: for u<w ) so that a prefix is fully
+// determined by the target vertices 0..w assigned so far (this is what makes the backtracking prunable
+// and the form hereditary in vertex order). Each edge -> the FIRST-APPEARANCE color of its covering
+// factor, or 0xFF if uncovered. Length = NEDGES.
+inline void serV(const std::vector<Match>& facs, uint8_t* out) {
+    int e2f[NEDGES]; for (int e = 0; e < NEDGES; e++) e2f[e] = -1;
+    for (int f = 0; f < (int)facs.size(); f++) { const Match& F = facs[f]; for (int u = 0; u < N; u++) { int v = F[u]; if (u < v) e2f[eidT[u][v]] = f; } }
+    int color[NM]; for (int i = 0; i < NM; i++) color[i] = -1; int nx = 0, idx = 0;
+    for (int w = 1; w < N; w++) for (int u = 0; u < w; u++) { int f = e2f[eidT[u][w]]; if (f < 0) out[idx++] = 0xFF; else { if (color[f] < 0) color[f] = nx++; out[idx++] = (uint8_t)color[f]; } }
+}
+
+// [CANONV] BRUTE minimal image of a partial cover under C(sigma0), in STANDARD coordinates:
+// min over h in Calpha of serV( (rho o h) . P ). This is the ORACLE the fast BSGS backtracking
+// (canonV_fast) is validated against. Enumerable path only (K14). `best` <- NEDGES bytes.
+inline void canonV_brute(const std::vector<Match>& chosen, const std::vector<Perm>& Calpha, const Perm& rho, uint8_t* best) {
+    uint8_t cur[NEDGES]; bool first = true; std::vector<Match> img(chosen.size());
+    for (const auto& h : Calpha) {
+        Perm gh = composePerm(rho, h);                                  // apply h, then rho (standard coords)
+        for (size_t i = 0; i < chosen.size(); i++) img[i] = applyAlpha(chosen[i], gh.data());
+        serV(img, cur);
+        if (first || memcmp(cur, best, NEDGES) < 0) { memcpy(best, cur, NEDGES); first = false; }
+    }
+}
+
+// [CANONV] prefix serialization: fill `out` with the vertex-order color-adjacency of the factorization
+// (edge->factor map e2f, in STANDARD coords) under the target->source labeling `inv`, restricted to the
+// first L target vertices (edges with max-endpoint < L). First-appearance coloring in max-endpoint order.
+// Returns the byte length L*(L-1)/2. Used both for the full image (L=N) and for pruning at partial L.
 inline int serVPrefix(const int* e2f, const uint8_t* inv, int L, uint8_t* out) {
     int color[NM]; for (int i = 0; i < NM; i++) color[i] = -1; int nx = 0, idx = 0;
     for (int w = 1; w < L; w++) for (int u = 0; u < w; u++) {
@@ -161,6 +302,13 @@ inline int serVPrefix(const int* e2f, const uint8_t* inv, int L, uint8_t* out) {
     }
     return idx;
 }
+
+// [CANONV] FAST minimal image under C(sigma0) = C2 wr S_{N/2}, via backtracking over the wreath in
+// STANDARD coords (pairs {2k,2k+1}). Assign target pairs 0..m-1 in order; each takes an unused SOURCE
+// pair + a within-pair flip. After assigning target pair k, target vertices 0..2k+1 are fixed, so the
+// serV PREFIX is determined -- prune any branch whose prefix already exceeds the best full image so far.
+// The search is exhaustive-with-pruning over the whole group, so it returns the exact minimal image =
+// canonV_brute, but visits only a pruned fraction of the 2^m*m! elements. `best` <- NEDGES bytes.
 inline void canonV_fast(const std::vector<Match>& chosen, const uint8_t* alpha, uint8_t* best, uint8_t* bestInv = nullptr) {
     Perm rho = buildRhoStd(alpha);
     int NF = (int)chosen.size();
@@ -200,29 +348,7 @@ inline void canonV_fast(const std::vector<Match>& chosen, const uint8_t* alpha, 
     rec(0);
 }
 
-// Canonical serialization of the alpha-orbit of factor m (the set {m, alpha m, ...}),
-// as the sorted concatenation of the orbit's factors. Used to (a) group first-orbit
-// tasks into C(alpha)-orbits and (b) test whether a centralizer element fixes an orbit.
-// Note g commutes with alpha, so g(orbit of m) == orbit of g(m); hence applying g to m
-// and re-taking the orbit gives g's image of the whole orbit.
-// gEl = the FULL list of non-identity elements of the symmetry group G (cyclic types:
-// alpha^1..alpha^{order-1}; V4: {a, b, ab}), so {m} U {g m} is the whole G-orbit.
-std::string orbitKey(const Match& m, const std::vector<Perm>& gEl) {
-    std::vector<Match> orb;  // the G-orbit of m
-    orb.reserve(gEl.size() + 1);
-    orb.push_back(m);
-    for (const auto& g : gEl) orb.push_back(applyAlpha(m, g.data()));
-    std::sort(orb.begin(), orb.end());
-    orb.erase(std::unique(orb.begin(), orb.end()), orb.end());
-    std::string s; s.reserve(orb.size() * N);
-    for (auto& F : orb) for (int u = 0; u < N; u++) s.push_back((char)F[u]);
-    return s;
-}
-
-// [DIAG] faithful numeric id of a perfect matching = its rank in genM's lowest-vertex-ascending order
-// (0 .. (N-1)!!-1). Two distinct matchings get distinct ranks. Used by COMPLETEPREFIX to print the
-// start/last c VALUE (min/max rank of the {0,3}-factor's canonical orbit) alongside the distinct count,
-// so start..last vs count reveals how sparsely a super-block skips across the c-space.
+// [BLOCK] ported verbatim from k18a2rep.cpp
 inline long long matchRank(const Match& F) {
     static const long long DF[] = { 1,1,3,15,105,945,10395,135135,2027025,34459425 };  // (2k-1)!! for k=0..9
     bool used[N] = { false }; long long rank = 0;
@@ -241,6 +367,7 @@ inline long long cRankCanon(const Match& F, const std::vector<Perm>& gEl) {
     for (const auto& g : gEl) { Match img = applyAlpha(F, g.data()); if (img < best) best = img; }
     return matchRank(best);
 }
+
 
 // convert a factor from adjacency form to the project's "src" pair-list form
 void adj_to_src(const uint8_t* adj, unsigned char* src) {
@@ -494,14 +621,6 @@ struct RepShared {
     std::vector<int>  rootActive;     // {0,1,...,|Calpha|-1}: the root active-gamma set
     std::vector<Perm> rootCgens;      // generators of C(alpha) (over-cap path)
     cgt::BSGS<N> rootBSGS;            // BSGS of C(alpha), built once per type; reused by setwiseStab each node
-    // V4 shard filters (host params v4Row*/v4*), SEARCH-FRAME semantics: the factor
-    // pairing 0-with-v4Row[i] must pair 1-with-v4Val[i]. Compacted (first nV4 slots).
-    // WARNING: the predicate is NOT C(alpha)-invariant, so a filtered run is a SHARD
-    // of the labeled search, not a clean class partition -- shard-union completeness
-    // must be validated empirically before census use.
-    uint8_t v4Row[4] = { 0, 0, 0, 0 };
-    uint8_t v4Val[4] = { 0, 0, 0, 0 };
-    int nV4 = 0;
 };
 
 // One parallel work item: a representative first-factor-orbit (the orbit of the factor
@@ -516,7 +635,7 @@ struct Task {
 
 // ---- shared progress/print state (one classification run) -------------------
 std::atomic<long long> g_nodes{ 0 };  // total exact-cover nodes across all workers
-std::atomic<long long> g_emits{ 0 };  // total complete P1F covers produced (results); new = results - rejected
+std::atomic<long long> g_emits{ 0 };  // total distinct classes found so far (across workers)
 // [FANOUT] REP_FANOUT=1: per-depth tally of the tree shape -- at each expanded node, indexed by the
 // number of committed factors: nodes expanded, rows the generator emitted, distinct orbits among
 // them. Printed with every progress row. Diagnostic only; off by default and then costs nothing.
@@ -538,78 +657,128 @@ inline void fanPrint() {
     }
     fflush(stdout);
 }
+
+// [PRECALC] REP_PRECALC=1 -- PROTOTYPE. Enumerable
+// block-threading pool only, trivial-stabilizer nodes only (REP_PRUNELEVEL=1 makes every node
+// below a seed trivial). The sigma-orbits admissible below a seed are enumerated
+// ONCE into a list; every node below inherits its parent's index list filtered by the orbit
+// the parent committed, and its candidates are the entries through its anchor edge -- no genM.
+//   rule 1: an ORBIT is one entry, base row (least member) first, the images after it;
+//   rule 2: the sigma-fixed factor is an entry of size 1.
+//
+// The k18 t9 a=4 thread-scaling test located its loss in this walk: two 1-thread processes
+// scaled 1.67x and the plain path 1.62x, but one process with two threads only 1.35x. The per-node make_shared, the per-child copies of the partial cover and
+// the per-child copies of the seed's shared_ptr -- one refcount cache line every thread hits --
+// are exactly the things that show between THREADS and not between PROCESSES. The k20 profile
+// that motivated the rewrite (block 0, 8 threads, 632 s wall / 4,407 s CPU) put it at:
+//     orbCompat 44.7%   is_perfect (+ its array::operator[]) 9.1%   malloc 9.9%
+//     splitNodeL self 9.1%   queue mutex 6.0%   commitOrbit+rollbackTo 4.2%
+//     shared_ptr refcounts 3.6%   the per-child `chosen` copy 1.9%   genM 0.2%
+bool g_precalc = false;
+struct OrbEnt {
+    Match rows[3];                     // sorted members: rows[0] is the base row
+    uint8_t nrows = 0;                 // 3, or 1 for the sigma-fixed factor
+};
+// The edge bitmaps live OUTSIDE OrbEnt, in their own 32-byte-aligned plane. The filter loop
+// reads nothing but bitmaps; with them inside OrbEnt it dragged ~61 bytes of rows through cache
+// to reach 24 bytes of bitmap, and at depth 6 it streams a 1.19M-entry list. One aligned 32-byte
+// record per entry is a single AVX2 load that never straddles a cache line, and the three ANDs
+// plus OR collapse to vpand + vptest. Unused high words are 0 and only pad to whole lanes.
+constexpr int OBW = ((NEDGES + 255) / 256) * 4;   // edge-bitset words, whole 256-bit lanes: 4 up to K22, 8 up to K32
+struct alignas(32) OrbBits { uint64_t w[OBW]; };
+struct OrbList {
+    std::vector<OrbEnt>  ent;         // the rows -- touched only when a child is really committed
+    std::vector<OrbBits> bits;        // bits[i] is ent[i]'s edge set; the two stay index-parallel
+};
+typedef std::vector<uint32_t> IdxList; // indices into OrbList::ent
+// A node's admissible list. `idx` is what the node needs to reach ent[] when it finally commits a
+// child; `bits` is the SAME entries' bitmaps copied out CONTIGUOUSLY, and it is the reason this
+// struct exists.
+//
+// Without it the filter walks an index list and loads bits[j] for
+// scattered j -- one dependent load per entry into a 38 MB plane. The 60 s profile of the running
+// case charged 28.1% to bitsDisjoint, which is a handful of instructions: it was waiting on those
+// loads, not doing the AND. Copying each survivor's 32-byte record into the child's own buffer
+// costs one store per survivor and turns every deeper scan into a LINEAR read of a small block --
+// <= 34 entries (~1 KB, L1-resident) below depth 12, ~4.1k entries at depth 9, which is where most
+// bitmap tests happen. The lists shrink ~60x per level, so the copy is paid on far fewer entries
+// than the scans it makes contiguous.
+struct NodeList {
+    IdxList               idx;
+    std::vector<OrbBits> bits;                 // bits[k] belongs to idx[k]
+    void clear() { idx.clear(); bits.clear(); }
+    size_t size() const { return idx.size(); }
+};
+// A queue item carries the seed's list, its PARENT's admissible list and the entry the parent
+// committed to reach it. The node computes its own list lazily when it is expanded (parent list
+// filtered by that entry), so lists exist only for nodes whose children are pending -- with the
+// LIFO queue that is about one path's worth -- and a seed's 233k children do not each get a
+// materialized list at the seed (the first cut did that: hours of one thread and tens of GB).
+struct OrbTask {
+    std::shared_ptr<OrbList> root;             // the seed's list (null until the seed builds it)
+    std::shared_ptr<const NodeList> plist;      // the parent's admissible entries (null at the seed = all)
+    uint32_t committed = 0xFFFFFFFFu;           // entry committed by the parent to make this node
+};
+// Edge-disjointness of two entries, the first half of the admissibility test and the single
+// hottest operation in the run. One 32-byte load each, one AND, one zero test (up to K22; from
+// K24 on the bitset spans two 256-bit lanes, OR-ed before the one test).
+inline bool bitsDisjoint(const OrbBits& a, const OrbBits& b) {
+    __m256i x = _mm256_and_si256(_mm256_load_si256((const __m256i*)a.w),
+                                 _mm256_load_si256((const __m256i*)b.w));
+    for (int q = 4; q < OBW; q += 4)
+        x = _mm256_or_si256(x, _mm256_and_si256(_mm256_load_si256((const __m256i*)(a.w + q)),
+                                                _mm256_load_si256((const __m256i*)(b.w + q))));
+    return _mm256_testz_si256(x, x) != 0;
+}
+// j stays admissible after committing c iff its edges are disjoint from c's and its base row is
+// Hamiltonian with every row of c: every other pair (sigma^a F_j, sigma^b F_c) is the sigma^a-image
+// of (F_j, sigma^{b-a} F_c), and a fixed factor is its own image, so those checks cover all pairs.
+// Keeping the bitmap plane and the rows apart is the point: the common case returns on the
+// bitmaps alone and never touches ent[] at all.
+//
+// The COMMITTED entry is loop-invariant -- one c for a whole filter pass over the parent's list --
+// so it arrives already resolved rather than re-derived per entry (re-deriving it showed as
+// orbCompat self time and vector<OrbEnt>::operator[] 3.4% in the profile). The caller holds the
+// candidate's bitmap CONTIGUOUSLY and passes it in, so this half of the test never touches the
+// 38 MB plane at all.
+inline bool rowsHamiltonian(const Match& jrow, const OrbEnt& ce) {
+    for (int r = 0; r < ce.nrows; r++) if (!is_perfect(jrow, ce.rows[r])) return false;
+    return true;
+}
+std::mutex g_print_mtx;               // serializes the periodic progress line
+std::chrono::steady_clock::time_point g_t0;         // run start time
+std::chrono::steady_clock::time_point g_last_print; // time of last progress line
+bool g_bprint = false;                // mirror of KnA2::m_bPrint (gate for ALL prints)
+// [ROW] REP_ROW=<r>:<j>[,<r>:<j>...] slice filter (docs/K22_spec.md §5.1): a candidate orbit holding the
+// factor that covers {0,r} survives only if that factor pairs vertex 1 with j. Empty = no filter.
+std::vector<std::pair<uint8_t, uint8_t>> g_rowPins;
+int g_rootThreads = 1;                // [ROOTTHREADS] worker count for collectTasks' root walk (= kThreads, set per run)
+bool g_rootCountOnly = false;         // [COUNTROOT] REP_COUNTROOT: count the root candidates, store none, search nothing
+std::atomic<long long> g_rootCount{ 0 };
+bool g_rootCapRaw = false;            // [ROOTCAP] REP_ROOTCAP=K:raw -- also skip the C(alpha) reduction (blocks = raw orbits)
+long long g_rootCap = 0;              // [ROOTCAP] REP_ROOTCAP=K: stop the root walk after K candidates -- a HARVEST of the
+                                      //   early blocks (classes found are real), never a census
+bool g_noClosurePrune = false;        // sibling of k18a2rep REP_NOPRUNE (always off here => closure ban always on)
+long long g_last_print_nodes = 0;     // g_nodes at the previous progress line (for the rate)
+int  g_order = 0, g_typeIdx = 0, g_numTypes = 0;    // current order, current cycle type 1/N
+
+// [BLOCK] ported verbatim from k18a2rep.cpp
 std::atomic<int> g_maxDepth{ 0 };     // diagnostic (observational only): deepest partial cover reached in the current block; printed by F3COMPLETE/NAVIGATE, never read by the search
-// [DIAG] REP_F17DUMP: sample the "forced 17th factor" infertility obstruction (TBD1 "check color").
-// At a coverGen node with NM-1 factors committed the 9 uncovered edges form the FORCED last factor
-// F17; an infertile a=4 block dies because F17 is non-Hamiltonian ("not perfect") with some earlier
-// factor. This counts forced-17th nodes reached and, once per 60s, prints one node's obstruction
-// signature (clashing factor(s), the cycle partition of F17 U F_k, the shortest clash cycle) plus a
-// running histogram of the partition shape -- to see whether the obstruction is UNIFORM/local.
-bool g_f17dump = false;
-std::atomic<long long> g_f17Total{ 0 };             // forced-17th (size NM-1) coverGen nodes reached
-std::atomic<long long> g_f17NextSec{ 60 };          // next 60s print boundary (claimed via CAS)
-std::mutex g_f17_mtx;                               // guards g_f17Hist + the sampled printf
-std::map<std::string, long long> g_f17Hist;         // sampled obstruction partition (e.g. "9+9") -> count
-std::map<int, long long> g_f17ClashHist;            // sampled: # earlier factors F17 clashes with -> count
-long long g_f17Sub = 16;                            // REP_F17SUB: accumulate the histogram every g_f17Sub-th forced-17th node
 std::atomic<long long> g_maxKids{ 0 };              // [DIAG] max children materialized by one splitNode call (completeBlockF3 memory probe)
 std::atomic<long long> g_maxNQ{ 0 };               // [DIAG] max completeBlockF3 work-queue size reached (memory probe)
-std::atomic<long long> g_monNextSec{ 5 };          // [DIAG] next 5s boundary for the kill-surviving F17 monitor dump
-// [DIAG] REP_PATSTAT: tally the sigma0 stay/swap orbit-pattern (S=sigma0-fixed factor, W=sigma0-paired) of
-// completed P1Fs and of forced-17th (level NM-1) partials, in commit order. Answers "which of the a=4 patterns
-// does the search actually reach / realize". Optional mid-level strided sample via REP_PATLEVEL/REP_PATSUB.
-bool g_patStat = false;
-// [FILTER] REP_SWAPCAP: a=4 has exactly 4 sigma0-swap-pairs (9 stay + 4 pairs, forced by the dichotomy).
-// Any partial that commits a 5th pair (>8 sigma0-non-symmetric factors) cannot complete to a=4 -> prune.
-// SOUND for a=4 blocks only (F1 = 1-diagonal). Measured ~49% of deep nodes violate this (PATSTAT L13).
-bool g_swapCap = false;
-// [FILTER] REP_PATONLY=<S/W string>: restrict the search to ONE full sigma0 stay/swap pattern. At each node prune
-// unless the committed pattern patSeq() is a prefix of the target. Measures one pattern's slice + whether it completes.
-std::string g_patOnly;                                       // REP_PATTERN=<S/W string>: neighbour-0 target (empty = calculate from rows 2,3)
-bool g_patApply = false;                                     // REP_PATAPPLY: enable the neighbour-0 pattern filter (default off)
-bool g_patPair = false;                                      // REP_PATPAIR: one-per-pair filter -- within each sigma0 position-pair {2k,2k+1} the two committed factors must differ (one S, one W). Complete |Aut|=2 filter, no fixed pattern.
-// REP_ROW4=S|W: force the sigma0 type of ROW 4 (the factor covering {0,4}); unset = any, the normal search.
-// Row 4 is the first row whose type is free in a block whose sigma0F3 lands at position >= 6 (in the q3=5
-// stratum one-per-pair already forces it to S). Exists to test whether a W at row 4 can ever complete.
-char g_row4 = 0;
-bool g_sGen = false;                                         // REP_SGEN: enumerate a FORCED-S row on the sigma0 quotient (genS) instead of filtering genM's output. Requires REP_TYPEMASK.
-bool g_typeMask = false;                                     // REP_TYPEMASK: apply the one-per-pair rule at GENERATION time (mask the partner of vertex 1 in genM) instead of rejecting the built orbit in patPairOK. Same classes, fewer nodes.
-std::string g_curBlock;    // "4.0.288" while that block is being completed (F3COMPLETE); empty otherwise.
-                           // Written by the single-threaded block loop before it calls completeBlockF3,
-                           // read by the workers inside that call -- never concurrent.
+int g_ovlLevel = 0;                                 // REP_CANONOVL=L: TREE-OVERLAP measure. In completeBlockF3, at each partial of
+                                                    // size>=L, canonKey it (order-independent S18 class), CAP (do not expand), and
+                                                    // accumulate ACROSS blocks -> total/distinct per size = the cross-block redundancy
+                                                    // McKay canonical-augmentation would remove. Diagnostic; k18-only.
+std::mutex g_ovlMtx;
+std::unordered_map<int, long long> g_ovlTot;        // size -> total partials visited (across all blocks)
+std::unordered_map<int, std::set<std::string>> g_ovlSet;  // size -> distinct canonKeys
+std::atomic<long long> g_ovlNonSym{ 0 };            // # partials recorded that contained a NON-sigma0-symmetric factor
+                                                    // (decides whether the fast quotient labeler applies -- 0 => all sigma0-symmetric)
+bool g_ovlKey = false;                              // REP_CANONKEY=1: also canonKey each partial (~1ms) for overlap. Default OFF = fast sigma0-symmetry+total probe only.
+std::atomic<long long> g_blkDone{ 0 };      // blocks finished in the requested range (block driver)
+std::atomic<long long> g_blkTotal{ 0 };     // blocks in the requested range, 0 = no block driver
 
-// ===========================================================================================
-// REP_OWNER -- block ownership, the stateless replacement for a global "already found" set.
-//
-// A class is reachable from MANY blocks of a column (about 60 of them for a=4), so a sweep
-// re-finds it over and over. Deciding "is this new?" by asking a set of everything found so
-// far makes a run depend on every earlier run: that is what a preload baseline is for, and it
-// is why two separately-run block ranges can each record the same class.
-//
-// Ownership removes the question. Every class has a canonical home in a column -- the MINIMUM
-// block index over all of its column labelings -- and that value is a property of the class
-// and the column, not of the labeling the search happened to find. So every block computes the
-// same owner, exactly one block matches, and a range [lo,hi) writes exactly the classes owned
-// in it: disjoint by construction, no baseline, no coordination.
-//
-//   owner(R) = min { c : block c holds R and c is a first-occurrence (canonical) block }
-//
-// The identity relabeling is always in the enumeration below (X = PFX[0] is sigma0-fixed with
-// the column's diagonal count, Y = PFX[1], pi = id, and the anchor factor is this block's own
-// orbit representative), so owner <= the current block ALWAYS. That is asserted, not assumed:
-// if it ever fails the owner function is wrong and the run is silently losing classes, so the
-// run aborts instead.
-//
-// The canonical restriction is provably redundant -- the driver keeps the FIRST occurrence of
-// each canonical key, i.e. the lowest raw c in its key class, and a duplicate starter holds
-// exactly the same classes as its twin, so the raw minimum is already canonical. It is kept
-// anyway: it costs one byte per block and one branch, and it makes correctness independent of
-// that ordering detail instead of resting on it.
-//
-// Ported from an offline Perl block-map oracle, which this must agree with.
-// ===========================================================================================
-// Ownership is the DEFAULT: every k18 REP_F3COMPLETE run dedups with no variable set at all.
-// Opt-in made silence mean "record every re-find", which is the answer nobody wants -- a range
 // that re-found a class owned by another block wrote it anyway, and the run read like a
 // discovery. Silence now means "write only what this range owns". REP_OWNER=0 turns it back
 // off, which is what a test that must see the raw re-find sets
@@ -821,175 +990,15 @@ static long long ownerOf(const std::vector<Match>& cover) {
     return best == INF ? -1 : best;
 }
 
-std::mutex g_pat_mtx;
-std::map<std::string, std::pair<long long, int>> g_patEmit;   // completion pattern -> (count, |Aut|*2)
-// [DIAG] REP_PDUMP: the ROW-PAIRING INVOLUTION p of each completion, in the SEARCH frame.
-// Row x is the factor covering (0,x); its sigma0 image is the row covering (0, alpha[F_x[alpha[0]]]),
-// so p[x] = alpha[F_x[alpha[0]]]. p is an involution whose FIXED POINTS are the sigma0-fixed (S)
-// rows -- 1 for a=0, 9 for a=4 -- and whose transpositions pair the W rows. It carries strictly more
-// than the S/W string (that string is just the indicator p[x]==x, and is constant in a=0).
-// Recorded per COMPLETION, not per class, so re-finds count too: the point is how many of the
-// a-priori-possible pairings are actually realized.
-// [DIAG] REP_PROBE1=L: at nodes with L committed factors, test the pairing invariant
-//   U == sigma0(R),  R = rows not yet committed (vertices with no factor covering (0,x)),
-//   U = vertices still unmatched to vertex 1.
-// Every remaining row x pairs with some z and then carries (1, sigma0(z)); summed over the pairing
-// that demands exactly sigma0(R), whichever pairing is chosen -- so this is pairing-INDEPENDENT and
-// costs one set compare instead of (k-1)!! enumerations. A node failing it cannot complete.
-// Records only; never prunes. Answers "would a look-ahead here reject anything the search does not
-// already avoid?" -- if violations are 0, the closure ban already implies it and there is nothing to win.
-int g_probe1 = 0;
-std::atomic<long long> g_probeSeen{ 0 }, g_probeBad{ 0 };
-bool g_pDump = false;
-std::mutex g_pdump_mtx;
-std::map<std::string, long long> g_pSeen;     // p (as "x:p[x],..") -> completions
-std::map<std::string, long long> g_patF17;                    // forced-17th (16-factor) pattern -> count
-std::map<std::string, long long> g_patMid;                    // REP_PATLEVEL pattern -> count (strided)
-int g_patLevel = -1;                                          // REP_PATLEVEL=L: also sample pattern at L committed factors
-long long g_patSub = 256;                                     // REP_PATSUB: mid-level sample stride
-std::atomic<long long> g_patMidSeen{ 0 };
-std::vector<long long> g_cref;                      // REP_CMAP: sorted reference c-ranks -> maps a c-rank to its 0..N index
-inline long long cIdx(long long r) { return g_cref.empty() ? r : (long long)(std::lower_bound(g_cref.begin(), g_cref.end(), r) - g_cref.begin()); }
-bool g_lvlStats = false;                            // REP_LEVELSTATS: per-level node-count histogram (branching/success profile)
-// [DIAG] REP_DIAGPROBE=<minDepth> (+ REP_DIAGSUB=<stride>, default 1000): look-ahead probe on the
-// UNCOVERED DIAGONALS. In the a=4 stratum every sigma0-fixed factor carries exactly one diagonal, so
-// each still-uncovered diagonal needs at least one legal S row on the leftover graph; if any has none,
-// the node is dead however deep the search would otherwise go before finding out. This only MEASURES:
-// per depth it counts nodes probed and nodes where some diagonal has no candidate. A prune is worth
-// building only if the hits land well above the depth the search dies at anyway (15-16 of 17).
-int g_diagProbe = 0;                                // 0 = off; else probe nodes with >= this many committed factors
-int g_diagSub = 1000;                               // probe every Nth qualifying node (the probe is not cheap)
-// [FILTER] REP_DIAGPRUNE=<lo>[:<hi>]: the same look-ahead used as a PRUNE, at depths lo..hi (hi
-// defaults to NM). SOUND for the a=4 stratum only: there every sigma0-fixed factor carries exactly one
-// diagonal, so each uncovered diagonal needs a legal S row and a node without one cannot complete.
-// Needs a fixed-point-free sigma0 (the probe walks sigma0 mirror pairs), like REP_TYPEMASK/REP_SGEN.
-int g_diagPruneLo = 0, g_diagPruneHi = NM;
-std::atomic<long long> g_diagPruned{ 0 };           // nodes killed by it
-std::atomic<long long> g_diagSeen{ 0 };
-std::mutex g_diag_mtx;
-long long g_diagProbes[NM + 2] = { 0 };             // depth -> nodes probed
-long long g_diagHits[NM + 2] = { 0 };               // depth -> nodes with an unrealizable diagonal
-std::atomic<long long> g_lvlReached[NM + 2];        // nodes reached at each level (chosen.size()); branching[m]=reached[m+1]/reached[m]
-// [DIAG] REP_GENSTAT: generation waste. genM builds a COMPLETE candidate matching, then
-// buildAndValidateOrbit decides whether it can join `chosen` (orbit-internal is_perfect, and the
-// F-vs-chosen check when the closure prune is off). made[] counts candidates built at a level,
-// kept[] those that survive. made/kept is the work spent enumerating factors that were already
-// doomed -- i.e. how much a cheaper up-front constraint could save at that level.
-bool g_genStat = false;
-std::atomic<long long> g_genMade[NM + 2];
-std::atomic<long long> g_genKept[NM + 2];
-int g_ovlLevel = 0;                                 // REP_CANONOVL=L: TREE-OVERLAP measure. In completeBlockF3, at each partial of
-                                                    // size>=L, canonKey it (order-independent S18 class), CAP (do not expand), and
-                                                    // accumulate ACROSS blocks -> total/distinct per size = the cross-block redundancy
-                                                    // McKay canonical-augmentation would remove. Diagnostic; k18-only.
-std::mutex g_ovlMtx;
-std::unordered_map<int, long long> g_ovlTot;        // size -> total partials visited (across all blocks)
-std::unordered_map<int, std::set<std::string>> g_ovlSet;  // size -> distinct canonKeys
-std::atomic<long long> g_ovlNonSym{ 0 };            // # partials recorded that contained a NON-sigma0-symmetric factor
-                                                    // (decides whether the fast quotient labeler applies -- 0 => all sigma0-symmetric)
-bool g_ovlKey = false;                              // REP_CANONKEY=1: also canonKey each partial (~1ms) for overlap. Default OFF = fast sigma0-symmetry+total probe only.
-static inline bool partialAllSym(const std::vector<Match>& F) {   // every factor sigma0-symmetric: F[u^1]==F[u]^1 ?
-    for (const auto& f : F) for (int u = 0; u < N; u++) if (f[u ^ 1] != (uint8_t)(f[u] ^ 1)) return false;
-    return true;
-}
-
-// [PRECALC] REP_PRECALC=1 -- PROTOTYPE. Enumerable
-// block-threading pool only, trivial-stabilizer nodes only (REP_PRUNELEVEL=1 makes every node
-// below a seed trivial). The sigma-orbits admissible below a seed are enumerated
-// ONCE into a list; every node below inherits its parent's index list filtered by the orbit
-// the parent committed, and its candidates are the entries through its anchor edge -- no genM.
-//   rule 1: an ORBIT is one entry, base row (least member) first, the images after it;
-//   rule 2: the sigma-fixed factor is an entry of size 1.
-//
-// The k18 t9 a=4 thread-scaling test located its loss in this walk: two 1-thread processes
-// scaled 1.67x and the plain path 1.62x, but one process with two threads only 1.35x. The per-node make_shared, the per-child copies of the partial cover and
-// the per-child copies of the seed's shared_ptr -- one refcount cache line every thread hits --
-// are exactly the things that show between THREADS and not between PROCESSES. The k20 profile
-// that motivated the rewrite (block 0, 8 threads, 632 s wall / 4,407 s CPU) put it at:
-//     orbCompat 44.7%   is_perfect (+ its array::operator[]) 9.1%   malloc 9.9%
-//     splitNodeL self 9.1%   queue mutex 6.0%   commitOrbit+rollbackTo 4.2%
-//     shared_ptr refcounts 3.6%   the per-child `chosen` copy 1.9%   genM 0.2%
-bool g_precalc = false;
-struct OrbEnt {
-    Match rows[3];                     // sorted members: rows[0] is the base row
-    uint8_t nrows = 0;                 // 3, or 1 for the sigma-fixed factor
-};
-// The edge bitmaps live OUTSIDE OrbEnt, in their own 32-byte-aligned plane. The filter loop
-// reads nothing but bitmaps; with them inside OrbEnt it dragged ~61 bytes of rows through cache
-// to reach 24 bytes of bitmap, and at depth 6 it streams a 1.19M-entry list. One aligned 32-byte
-// record per entry is a single AVX2 load that never straddles a cache line, and the three ANDs
-// plus OR collapse to vpand + vptest. w[3] is always 0 and only pads the record to 32 bytes.
-struct alignas(32) OrbBits { uint64_t w[4]; };
-struct OrbList {
-    std::vector<OrbEnt>  ent;         // the rows -- touched only when a child is really committed
-    std::vector<OrbBits> bits;        // bits[i] is ent[i]'s edge set; the two stay index-parallel
-};
-typedef std::vector<uint32_t> IdxList; // indices into OrbList::ent
-// A node's admissible list. `idx` is what the node needs to reach ent[] when it finally commits a
-// child; `bits` is the SAME entries' bitmaps copied out CONTIGUOUSLY, and it is the reason this
-// struct exists.
-//
-// Without it the filter walks an index list and loads bits[j] for
-// scattered j -- one dependent load per entry into a 38 MB plane. The 60 s profile of the running
-// case charged 28.1% to bitsDisjoint, which is a handful of instructions: it was waiting on those
-// loads, not doing the AND. Copying each survivor's 32-byte record into the child's own buffer
-// costs one store per survivor and turns every deeper scan into a LINEAR read of a small block --
-// <= 34 entries (~1 KB, L1-resident) below depth 12, ~4.1k entries at depth 9, which is where most
-// bitmap tests happen. The lists shrink ~60x per level, so the copy is paid on far fewer entries
-// than the scans it makes contiguous.
-struct NodeList {
-    IdxList               idx;
-    std::vector<OrbBits> bits;                 // bits[k] belongs to idx[k]
-    void clear() { idx.clear(); bits.clear(); }
-    size_t size() const { return idx.size(); }
-};
-// A queue item carries the seed's list, its PARENT's admissible list and the entry the parent
-// committed to reach it. The node computes its own list lazily when it is expanded (parent list
-// filtered by that entry), so lists exist only for nodes whose children are pending -- with the
-// LIFO queue that is about one path's worth -- and a seed's 233k children do not each get a
-// materialized list at the seed (the first cut did that: hours of one thread and tens of GB).
-struct OrbTask {
-    std::shared_ptr<OrbList> root;             // the seed's list (null until the seed builds it)
-    std::shared_ptr<const NodeList> plist;      // the parent's admissible entries (null at the seed = all)
-    uint32_t committed = 0xFFFFFFFFu;           // entry committed by the parent to make this node
-};
-// Edge-disjointness of two entries, the first half of the admissibility test and the single
-// hottest operation in the run. One 32-byte load each, one AND, one zero test.
-inline bool bitsDisjoint(const OrbBits& a, const OrbBits& b) {
-    const __m256i x = _mm256_and_si256(_mm256_load_si256((const __m256i*)a.w),
-                                       _mm256_load_si256((const __m256i*)b.w));
-    return _mm256_testz_si256(x, x) != 0;
-}
-// j stays admissible after committing c iff its edges are disjoint from c's and its base row is
-// Hamiltonian with every row of c: every other pair (sigma^a F_j, sigma^b F_c) is the sigma^a-image
-// of (F_j, sigma^{b-a} F_c), and a fixed factor is its own image, so those checks cover all pairs.
-// Keeping the bitmap plane and the rows apart is the point: the common case returns on the
-// bitmaps alone and never touches ent[] at all.
-//
-// The COMMITTED entry is loop-invariant -- one c for a whole filter pass over the parent's list --
-// so it arrives already resolved rather than re-derived per entry (re-deriving it showed as
-// orbCompat self time and vector<OrbEnt>::operator[] 3.4% in the profile). The caller holds the
-// candidate's bitmap CONTIGUOUSLY and passes it in, so this half of the test never touches the
-// 38 MB plane at all.
-inline bool rowsHamiltonian(const Match& jrow, const OrbEnt& ce) {
-    for (int r = 0; r < ce.nrows; r++) if (!is_perfect(jrow, ce.rows[r])) return false;
-    return true;
-}
-std::mutex g_print_mtx;               // serializes the periodic progress line
-std::chrono::steady_clock::time_point g_t0;         // run start time
-std::chrono::steady_clock::time_point g_last_print; // time of last progress line
-bool g_bprint = false;                // mirror of K18A2::m_bPrint (gate for ALL prints)
-long long g_last_print_nodes = 0;     // g_nodes at the previous progress line (for the rate)
-int  g_order = 0, g_typeIdx = 0, g_numTypes = 0;    // current order, current cycle type 1/N
 
 // The two identity cells of a column-set-A row: its symmetry and type strings.
 static void subsetCells(int order, bool isV4, bool isE9, bool isS3, const char* tstr,
-                        std::string& symmetry, std::string& type)
+                        std::string& symmetry, std::string& type, const char* genName = nullptr)
 {
     char t[80]; snprintf(t, sizeof(t), "%s", tstr);
     { size_t L = strlen(t); while (L && t[L - 1] == ' ') t[--L] = '\0'; }
-    if (isV4 || isS3 || isE9) {
-        const char* g = isV4 ? "V4" : isS3 ? "S3" : "E9";
+    if (isV4 || isS3 || isE9 || genName) {
+        const char* g = genName ? genName : isV4 ? "V4" : isS3 ? "S3" : "E9";
         symmetry = g;
         // tstr already opens with the group token in the k18 shapes -- do not repeat it.
         type = (!strncmp(t, g, strlen(g))) ? std::string(t + strlen(g) + (t[strlen(g)] == ' ' ? 1 : 0))
@@ -1009,7 +1018,9 @@ static const LogCol kColsA[] = {
     { "Type",        14, false },
     { "Elapsed",      7, true  },
     { "Leg nodes (rate)", 22, false },
-    { "Total saved(duplicates)", 0, false },
+    { "Total blocks/done", 17, false },        // ~ rows only
+    { "Block restart #(%)", 18, false },       // ~ rows only: lowest block in process (REP_BLOCKS=#-last)
+    { "Results saved(skipped duplicates)", 0, false },
 };
 // Same count, same widths, different words: the = row does not carry what the data rows carry.
 static const LogCol kTotalsA[] = {
@@ -1017,6 +1028,8 @@ static const LogCol kTotalsA[] = {
     { "Type",        14, false },
     { "Elapsed",      7, true  },
     { "Total nodes (average)", 22, false },
+    { "",            17, false },
+    { "",            18, false },
     { "Saved",        0, false },
 };
 
@@ -1060,24 +1073,67 @@ static const LogCol kTotalsB[] = {
 
 
 char g_typeStr[80] = "";              // current cycle type string (e.g. "2 2 2 2 2 2 2 2 2")
+
+// [DIAG] REP_F17DUMP (mirror of k18a2rep): forced-LAST-factor infertility obstruction sampler.
+// At a node with NM-1 committed factors the uncovered edges form the FORCED last factor; an
+// infertile block dies because that factor is non-Hamiltonian with an earlier one. Sample the
+// cycle-partition of the tightest clash, keyed by the a-stratum of F1 (a=(m - #diag F1)/2). For
+// the fpf 2^m type: a in {0, (m-1)/2}; K14 (m=7) => a in {0,3} (the analogue of K18 a=4).
+bool g_f17dump = false;
+std::atomic<long long> g_f17Total{ 0 };
+std::atomic<long long> g_f17NextSec{ 60 };
+bool g_lvlStats = false;                             // REP_LEVELSTATS: per-level node-count histogram (branching/success profile)
+bool g_canonTest = false, g_vTest = false, g_fTest = false;   // REP_CANONTEST / REP_VTEST / REP_FTEST, read ONCE: a getenv() per cover() node cost ~4x on K16 order 2
+std::atomic<long long> g_lvlReached[NM + 2];         // nodes reached at each level (chosen.size()); branching[m]=reached[m+1]/reached[m]
+bool g_gsym = false;                                 // [GSYM] orbit-consistency prune in genM: on for E9/S3/generic group legs, REP_GSYM=1/0 forces it on/off
+std::atomic<long long> g_genCalls{ 0 }, g_genLeaves{ 0 }, g_genPass{ 0 };   // [DIAG] REP_LEVELSTATS: genM calls (partial matchings), leaves (full matchings), leaves whose orbit validates
+std::mutex g_f17_mtx;
+// [PORT from k18a2rep] REP_PRUNELEVEL / REP_PATSTAT / REP_PATONLY -- single-pattern completeness test.
+int g_pruneMaxFactors = 0;                                    // REP_PRUNELEVEL: skip per-node setwiseStab once >= this many factors committed (0 = prune everywhere)
+bool g_patStat = false;                                       // REP_PATSTAT: tally the stay/swap pattern (S=alpha-fixed factor, W=alpha-paired) in commit order
+std::string g_patOnly;                                        // REP_PATTERN=<S/W string>: neighbour-0 target; each factor's aut-type must match at position F[0]-1 (empty = calculate)
+bool g_patApply = false;                                      // REP_PATAPPLY: enable the neighbour-0 pattern filter (default off)
+bool g_typeMask = false;                                      // REP_TYPEMASK: apply the one-per-pair rule at GENERATION time (mask the partner of vertex 1 in genM) instead of rejecting the built orbit. Same classes, fewer nodes.
+// [PORT k18] the t9 a=4 block switches (docs/K22_spec.md §2.3), verbatim from k18a2rep.cpp:
+bool g_patPair = false;                                       // REP_PATPAIR / REP_PATAPPLY=oneperpair: within each sigma0 position-pair {2k,2k+1} the two committed factors must differ (one S, one W)
+bool g_mrv = false;                                            // REP_MRV: lookahead (every uncovered edge needs a candidate) + most-constrained anchor edge in cover()
+bool g_sGen = false;                                       // REP_SGEN: enumerate a FORCED-S row on the sigma0 quotient (genS) instead of filtering genM's output. Requires REP_TYPEMASK.
+int g_diagPruneLo = 0, g_diagPruneHi = NM;                    // REP_DIAGPRUNE=<lo>[:<hi>]: prune nodes of lo..hi rows with an unrealizable uncovered diagonal
+std::atomic<long long> g_diagPruned{ 0 };                     // nodes killed by it
+std::mutex g_pat_mtx;
+std::map<std::string, std::pair<long long, int>> g_patEmit;   // completion pattern -> (count, |Aut|*2)
+std::map<std::string, long long> g_patF17;                    // forced-last-factor pattern -> count
+// [REP_PATBYCLASS] per-canonical-class collection of NEIGHBOUR-0-INDEXED patterns (position j = the factor whose
+// 0-neighbour F[0]==j, 1-indexed; NOT commit order). Recorded on EVERY detection (first-time class AND every
+// re-detection), pre-canonization. Answers: for each result, which original patterns produce it. Needs canonization
+// OFF (REP_PRUNELEVEL=1) or every class collapses to a single labeling. Diagnostic; K14 falsification test.
+bool g_patByClass = false;
+std::map<std::string, std::map<std::string, long long>> g_patClassPats;   // canonKey -> (nbr0-pattern -> detection count)
+std::map<std::string, int> g_patClassAut;                    // canonKey -> lastAut (2*|Aut|)
+std::map<std::string, std::string> g_patClassFirst;          // canonKey -> the FIRST nbr0-pattern seen for this class
+std::map<std::string, long long> g_f17Hist;   // "a{a}:{partition}" -> count ("NOCLASH" = forced factor IS Hamiltonian = fertile leaf)
+long long g_f17Sub = 1;
+
+// cycle-length partition (descending) of the union of two edge-disjoint perfect matchings (their
+// alternating cycles); a single {N} entry = one Hamiltonian cycle. Optionally returns shortest cycle.
+inline std::vector<int> unionCycleParts(const Match& a, const Match& b, std::vector<int>* shortCyc = nullptr) {
+    bool seen[N]; for (int i = 0; i < N; i++) seen[i] = false;
+    std::vector<int> parts, best;
+    for (int s = 0; s < N; s++) {
+        if (seen[s]) continue;
+        std::vector<int> cyc; int u = s; bool useA = true;
+        do { seen[u] = true; cyc.push_back(u); u = useA ? a[u] : b[u]; useA = !useA; } while (u != s);
+        parts.push_back((int)cyc.size());
+        if (best.empty() || cyc.size() < best.size()) best = cyc;
+    }
+    std::sort(parts.begin(), parts.end(), std::greater<int>());
+    if (shortCyc) *shortCyc = best;
+    return parts;
+}
 std::atomic<long long> g_reps_total{ 0 };   // representative/queue tasks for the current type (64-bit:
 std::atomic<long long> g_reps_done{ 0 };    //   the 2026-07 K20 type-5 run reached 2.129e9, ~1% below INT_MAX)
-
-// [PROGRESS] How far through the work the run is, as a percentage on the periodic [rep] line.
-// ONLY the block driver publishes it, because only its denominator is both fixed before the work
-// starts and evenly spent: it is a range of blocks, it is known up front, and blocks are broadly
-// comparable in cost.
-//
-// The other fan-outs were tried and are not printed:
-//   * the two work-queue paths (over-cap, block threading) count tasks CREATED against tasks
-//     COMPLETED, and children are pushed as the tree opens, so the denominator GROWS and the
-//     percentage can fall back late in a long run;
-//   * the ENUMERABLE path does have a fixed denominator, reps.size(), but the work behind a
-//     representative is wildly uneven. MEASURED on the order-3 3^6 leg of K18Aut3-All: still
-//     reading 0% after 25 minutes of a 64-minute leg that was by then 35% of the way through
-//     its nodes. A number that says 0 for the first half hour is worse than no number.
-std::atomic<long long> g_blkDone{ 0 };      // blocks finished in the requested range (block driver)
-std::atomic<long long> g_blkTotal{ 0 };     // blocks in the requested range, 0 = no block driver
+std::atomic<long long> g_blkLow{ -1 };      // [RESUME] lowest root block in process on a per-block walk (-1 = none)
+std::atomic<long long> g_blkLast{ -1 };     //   and that walk's last block: restart = REP_BLOCKS=g_blkLow-g_blkLast
 
 // V4 mode sentinel: runRepresentativeMethod(order == kOrderV4) classifies P1Fs invariant
 // under a KLEIN FOUR-GROUP {id, a, b, ab} (host maps the REP_ORDER[S] token "V4" to this).
@@ -1088,7 +1144,11 @@ constexpr int kOrderV4 = -4;
 // "group has order divisible by 6 or 9 but no element of that order" gap.
 constexpr int kOrderE9 = -9;
 constexpr int kOrderS3 = -6;
-inline const char* ordName(int o) { static thread_local char b[16]; if (o == kOrderV4) return "V4"; if (o == kOrderE9) return "E9"; if (o == kOrderS3) return "S3"; snprintf(b, sizeof(b), "%d", o); return b; }
+// [GENGRP] generic small-group legs D8, Q8, C4xC2, C2xC2xC2, A4, D10 (host tokens, include/knA2.h): codes kOrderGenBase - i.
+constexpr int kOrderGenBase = KNA2_GEN_BASE;
+inline bool isGenCode(int o) { return o <= kOrderGenBase && o > kOrderGenBase - 6; }
+static const char* const kGenNames[6] = { "D8", "Q8", "C4xC2", "C2xC2xC2", "A4", "D10" };
+inline const char* ordName(int o) { static thread_local char b[16]; if (o == kOrderV4) return "V4"; if (o == kOrderE9) return "E9"; if (o == kOrderS3) return "S3"; if (isGenCode(o)) return kGenNames[kOrderGenBase - o]; snprintf(b, sizeof(b), "%d", o); return b; }
 
 // ---- harvest mode (per-order class-count target) ----------------------------
 // When g_target>0, the run STOPS as soon as g_harvest holds g_target distinct classes,
@@ -1097,8 +1157,6 @@ inline const char* ordName(int o) { static thread_local char b[16]; if (o == kOr
 // so the count is exact even mid-run. Result is COMPLETE only if g_target == the true
 // count (e.g. a known/published number); otherwise it is an explicit LOWER BOUND.
 int g_target = 0;                     // 0 = run to completion; >0 = stop after this many distinct classes
-int g_printRawLeft = 0;               // [DIAG] REP_PRINTRAW=n: dump the search-frame cover of the
-                                      //   first n new classes (the frame the V4 filters apply to)
 std::atomic<bool> g_stop{ false };    // set once g_harvest reaches g_target; all workers/recursion bail
 std::mutex g_harvest_mtx;             // guards g_harvest (locked only on a genuine new class -> rare)
 std::map<std::string, long long> g_harvest; // class key -> #detections this order (capture-recapture input; 64-bit for week-scale harvests)
@@ -1116,94 +1174,23 @@ std::atomic<int> g_f1{ 0 }, g_f2{ 0 };// #classes seen exactly once / exactly tw
 std::atomic<int> g_banked{ 0 };       // exact |g_harvest| mirror (lock-free read for the [rep] line)
 std::atomic<long long> g_blockCovers{ 0 };  // raw complete-covers found in the CURRENT level-L block (estimate log)
 std::atomic<long long> g_dupCovers{ 0 };    // rejected covers = re-detections (cdet>1) of an already-found class; total covers = classes + rejected
-bool g_noOrbChk = false;                     // REP_NOORBCHK: skip the orbit-internal is_perfect (PERF PROBE only -- see buildAndValidateOrbit)
-bool g_noClosurePrune = false;              // REP_NOPRUNE=1 -> skip genM's closure-ban early prune (A/B; leaf is_perfect still validates)
-int g_pruneMaxFactors = 0;                  // REP_PRUNELEVEL: once >= this many factors are committed, SKIP the per-node setwiseStab/schreierDedup prune (explore all orbits, rely on the global canonKey dedup). 0 = disabled (prune at every depth, default). Trades more duplicate work for skipping the expensive BSGS setwise-stabilizer walk where it rarely pays.
+std::string g_curBlock;    // "L5.288" while that level-L block is being scanned; empty otherwise. Written by
+                           // the single-threaded enumeration DFS before it calls runBlock, read by the
+                           // workers inside that call -- never concurrent. Only the CHUNKED sweep
+                           // (REP_RANGE=start:end:step, the over-cap path) walks blocks one at a time, so
+                           // that is the only mode with a label and a flush point; on the enumerable path
+                           // class records carry "block -" and no duplicate lines are written.
 FILE* g_estFile = nullptr;            // REP_ESTFILE: append "<blockIdx> <covers> <newDistinct>" per FULL block; null = off
-// REP_LOCATE: LOCATE MODE. Given target factorization file(s), report the depth-shardLevel block index i
-// whose committed cover is a SUBSET of a target's factor set, then STOP. Skips runBlock => fast (walks only
-// the block-index DFS). Requires the SAME REP_PRUNELEVEL/REP_LEVEL as the run whose block numbers you want.
-struct LocTarget { int nfac; uint32_t edgeFac[N][N]; };  // edgeFac[a][b] = bitmask of factor indices containing edge {a,b}
-std::vector<LocTarget> g_locTargets;
-static inline std::string facKey18(const Match& m) { return std::string((const char*)m.data(), (size_t)N); }
-
-// LOCATE MATCH (up to C(sigma0)): is there phi in the centralizer of sigma0=(0 1)(2 3)..(16 17) mapping every
-// cover factor onto a WHOLE target factor? phi commutes with sigma0 => phi(2k+1)=sigma0(phi(2k)), so phi is
-// fixed by its EVEN-vertex images. Backtrack over even source vertices. Candidate-mask prune: cand[c] = set of
-// target factors still consistent with cover factor c's mapped edges; prune the instant any cand[c] empties.
-static bool locBt(int ev, const std::vector<Match>& cover, const LocTarget& T, int* phi, bool* usedT, const uint32_t* cand) {
-    if (ev == N) return true;                 // full phi with every cand[c] != 0 => each cover factor == a target factor
-    size_t nc = cover.size();
-    for (int t = 0; t < N; t++) {
-        if (usedT[t]) continue; int tp = t ^ 1; if (usedT[tp]) continue;   // sigma0 block {t, t^1}
-        phi[ev] = t; phi[ev + 1] = tp;
-        uint32_t ncand[16]; bool ok = true;
-        for (size_t c = 0; c < nc; c++) {
-            uint32_t m = cand[c]; const Match& f = cover[c];
-            int w0 = f[ev];     int p0 = (w0 < ev) ? phi[w0] : (w0 == ev ? t : (w0 == ev + 1 ? tp : -1)); if (p0 >= 0) m &= T.edgeFac[t][p0];
-            int w1 = f[ev + 1]; int p1 = (w1 < ev) ? phi[w1] : (w1 == ev ? t : (w1 == ev + 1 ? tp : -1)); if (p1 >= 0) m &= T.edgeFac[tp][p1];
-            ncand[c] = m; if (!m) { ok = false; break; }
-        }
-        if (ok) {
-            usedT[t] = true; usedT[tp] = true;
-            if (locBt(ev + 2, cover, T, phi, usedT, ncand)) { usedT[t] = false; usedT[tp] = false; return true; }
-            usedT[t] = false; usedT[tp] = false;
-        }
-    }
-    return false;
-}
-static bool coverMatchesTarget(const std::vector<Match>& cover, const LocTarget& T) {
-    if (cover.size() > 16) return false;
-    int phi[N]; bool usedT[N]; for (int i = 0; i < N; i++) usedT[i] = false;
-    uint32_t cand[16]; uint32_t full = (T.nfac >= 32) ? 0xFFFFFFFFu : ((1u << T.nfac) - 1u);
-    for (size_t c = 0; c < cover.size(); c++) cand[c] = full;
-    return locBt(0, cover, T, phi, usedT, cand);
-}
-// Same, but on success copy the matching centralizer element phi (maps cover factors onto target
-// factors). Used by path->coordinate to rotate the target into the search frame at level 1.
-static bool coverMatchesTargetPhi(const std::vector<Match>& cover, const LocTarget& T, int* phiOut) {
-    if (cover.size() > 16) return false;
-    int phi[N]; bool usedT[N]; for (int i = 0; i < N; i++) usedT[i] = false;
-    uint32_t cand[16]; uint32_t full = (T.nfac >= 32) ? 0xFFFFFFFFu : ((1u << T.nfac) - 1u);
-    for (size_t c = 0; c < cover.size(); c++) cand[c] = full;
-    if (locBt(0, cover, T, phi, usedT, cand)) { for (int i = 0; i < N; i++) phiOut[i] = phi[i]; return true; }
-    return false;
-}
-std::map<int, int> g_autHist;         // |Aut| -> #distinct classes so far (live distribution; guarded by g_harvest_mtx)
 std::function<void(const unsigned char*, int)> g_sendResult;  // forwards each globally-new class + its |Aut| to the
                                       //   NORMAL result pipeline the moment it is found (set per run)
 
 // One periodic progress line (every 300s) shared by cover()/coverGen(): shows the current
 // order + cycle type, how many of the type's representative subtrees are done (the best
 // completion-trend signal), node throughput since the last line, and classes found so far.
-// [DIAG] REP_F17DUMP: kill-surviving monitor. Every ~5s, overwrite f17_mon.txt with the live
-// forced-17th tally, max depth, splitNode child-batch/queue peaks (memory probe), and the sampled
-// obstruction + clash histograms. Because it is written to a file each tick, a watchdog kill (OOM cap)
-// still leaves the latest snapshot on disk -- unlike the 60s-gated stdout print which is lost on kill.
-inline void f17MonitorTick() {
-    double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_t0).count();
-    long long due = g_monNextSec.load(std::memory_order_relaxed);
-    if (el < due) return;
-    long long nxt = ((long long)(el / 5.0) + 1) * 5;
-    if (!g_monNextSec.compare_exchange_strong(due, nxt, std::memory_order_relaxed)) return;
-    std::lock_guard<std::mutex> lk(g_f17_mtx);
-    std::string hist; for (auto& kv : g_f17Hist) { char t[48]; snprintf(t, sizeof(t), "%s%s:%lld", hist.empty() ? "" : "  ", kv.first.c_str(), kv.second); hist += t; }
-    std::string ch;   for (auto& kv : g_f17ClashHist) { char t[48]; snprintf(t, sizeof(t), "%s%d:%lld", ch.empty() ? "" : " ", kv.first, kv.second); ch += t; }
-    FILE* f = fopen("f17_mon.txt", "w");
-    if (f) {
-        fprintf(f, "t=%.0fs maxlvl=%d/%d forced17(sampled 1/%lld)=%lld nodes=%lld maxKids=%lld maxNQ=%lld\n",
-                el, g_maxDepth.load(), NM, g_f17Sub, g_f17Total.load(), g_nodes.load(), g_maxKids.load(), g_maxNQ.load());
-        fprintf(f, "obstruction histogram: %s\n", hist.c_str());
-        fprintf(f, "clash-count histogram: %s\n", ch.c_str());
-        fclose(f);
-    }
-}
-
 inline void progressTick(long long& nodes_flush, std::atomic<long long>& g_nodesRef) {
     if ((nodes_flush & 0x3FF) != 0) return;   // flush every 1024 nodes/worker (the 300s gate paces the actual print)
     g_nodesRef.fetch_add(nodes_flush, std::memory_order_relaxed);
     nodes_flush = 0;
-    if (g_f17dump) f17MonitorTick();          // [DIAG] periodic kill-surviving F17 monitor snapshot to disk
     if (!g_bprint) return;
     auto now = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lk(g_print_mtx);
@@ -1228,20 +1215,23 @@ inline void progressTick(long long& nodes_flush, std::atomic<long long>& g_nodes
     cells.push_back("");
     cells.push_back(fmtElapsed(elapsed));                       // cumulative, as on a data row
     cells.push_back(fmtNodes(cur - g_legNodes0, elapsed - g_runSec));   // this leg's own, as on a data row
+    // [PROGRESS] the leg's blocks total/done, and the restart block (lowest in process: REP_BLOCKS=#-last)
+    const long long rd = g_reps_done.load(std::memory_order_relaxed), rt = g_reps_total.load(std::memory_order_relaxed);
+    char prog[48] = "";
+    if (rt > 0) snprintf(prog, sizeof prog, "%lld/%lld", rt, rd);
+    cells.push_back(prog);
+    const long long bl = g_blkLow.load(std::memory_order_relaxed), bz = g_blkLast.load(std::memory_order_relaxed);
+    char rs[48] = "";
+    if (bl >= 0) snprintf(rs, sizeof rs, "%lld (%.3f%%)", bl, 100.0 * (double)bl / (double)(bz + 1));
+    cells.push_back(rs);
     cells.push_back(fmtSavedDup(saved, dups, savedHist, dupHist));
     g_tbl->row('~', cells);
     fanPrint();
 }
 
 // ---- per-thread search worker ----------------------------------------------
-// [INFO] the relabeling of the frame that won canonKey's minimum, i.e. how the canonical matrix was
-// labeled. thread_local rather than a RepWorker member on purpose: adding members to that object has
-// measurably perturbed its layout and cost before. Written only when a new minimum is found.
-static thread_local std::array<uint8_t, N> t_canonP;
 struct RepWorker {
     const RepShared* sh = nullptr;    // shared read-only data for the current type
-    std::set<long long>* cSet = nullptr;    // COMPLETEPREFIX: distinct-c sink (canonical c-ranks; set by that path only)
-    std::mutex* cMtx = nullptr;             // guards *cSet
 
     std::vector<Match> chosen;        // factors committed so far on this search path
     std::vector<std::array<uint8_t, 2 * NHALF>> facEdges; // facEdges[f] = edge ids of factor f
@@ -1263,15 +1253,50 @@ struct RepWorker {
     std::set<std::string>      canon;     // distinct canonical keys found by THIS worker
     std::map<std::string, int> autOf;     // canonical key -> 2*|Aut| (this worker)
     std::vector<Match>* collectInto = nullptr;  // non-null => collect first-orbit tasks, don't recurse
+    ChunkList* collectChunks = nullptr;          // [SETUPMEM] genRoot's target, when set (the root walk)
+    size_t collectCap = SIZE_MAX;     // [MRV] genM stops once collectInto holds this many
     std::vector<Match> orbScratch;    // reusable scratch for genM's leaf buildAndValidateOrbit (avoids per-leaf alloc)
-    // splitNode reusable buffers: cleared (not reconstructed) per node so the ultra-wide a=4 candidate
-    // lists don't churn the heap. splitNode is non-recursive per worker, so per-worker members are safe.
-    std::vector<Match> snCands, snReps;               // candidate matchings / orbit reps
-    std::vector<std::string> snKeys;                  // orbitKey strings (kept for schreierDedup)
-    std::unordered_map<std::string, int> snKeyIdx;    // orbitKey -> rep index (clear() retains bucket array)
-    std::vector<int> snRepIdx;                        // selected rep indices
+
+    // [GSYM] Orbit-consistency prune inside genM. The leaf test needs, for every non-identity g, gM == M or
+    // gM edge-disjoint from M (a perfect pair shares no edge). So once one placed edge e has g(e) in M (g keeps
+    // M) and another has g(e) not in M (g moves M), no completion can pass: cut the branch there instead of
+    // generating every completion and rejecting it at the leaf. gMode[d*gN + i] is element i's mode after the
+    // d-th edge: 0 open, 1 keeps M, 2 moves M. g and g^-1 share a mode (gM == M iff g^-1 M == M), so each new
+    // edge is read through both, which also catches g(e') landing on the new edge for an earlier e'.
+    // Same candidates as without it -- only completions the leaf test rejects are skipped -- so nodes and
+    // results are unchanged. K24 S3 t2 d3 R2 f0: 1 leaf in ~110,000 passed the leaf test without it.
+    std::vector<Perm> gInv;              // gInv[i] = inverse of sh->gElems[i]
+    std::vector<int8_t> gMode;           // (NHALF + 1) rows of gN modes
+    int gN = 0;
+    void gsymInit() {                    // once per anchor (top genM call): gN * N work, nothing cached across types
+        gN = (int)sh->gElems.size();
+        gInv.resize(gN);
+        for (int i = 0; i < gN; i++) for (int x = 0; x < N; x++) gInv[i][sh->gElems[i][x]] = (uint8_t)x;
+        if (gMode.size() < (size_t)(NHALF + 1) * gN) gMode.resize((size_t)(NHALF + 1) * gN);
+    }
+    // Row d = row d-1 plus the evidence of edge {u,v}; `used` already holds u and v, M holds their pairing.
+    bool gsymStep(const Match& M, uint32_t used, int u, int v, int d) {
+        const int8_t* prev = d > 0 ? &gMode[(size_t)(d - 1) * gN] : nullptr;
+        int8_t* cur = &gMode[(size_t)d * gN];
+        for (int i = 0; i < gN; i++) {
+            int m = prev ? prev[i] : 0;
+            const Perm& g = sh->gElems[i]; const Perm& h = gInv[i];
+            const int a[2] = { g[u], h[u] }, b[2] = { g[v], h[v] };
+            for (int j = 0; j < 2; j++) {
+                int e;
+                if (used & (1u << a[j])) e = (M[a[j]] == b[j]) ? 1 : 2;   // image edge decided: in M or not
+                else if (used & (1u << b[j])) e = 2;                       // b taken by someone, a still free
+                else continue;                                             // both free: no evidence yet
+                if (m && m != e) return false;
+                m = e;
+            }
+            cur[i] = (int8_t)m;
+        }
+        return true;
+    }
 
     long long nodes = 0;              // local node counter (flushed to g_nodes periodically)
+    long long capAt = 0;              // [SPLIT] REP_SPLITSAMPLE: cover() returns once nodes passes this (0 = no cap)
     long long nodes_flush = 0;        // local nodes not yet added to g_nodes
 
     void clearState() {               // reset search state for a fresh task
@@ -1279,22 +1304,6 @@ struct RepWorker {
         memset(covered, 0, sizeof(covered));
         memset(coveredBits, 0, sizeof(coveredBits));
         for (int e = 0; e < NEDGES; e++) edgeFactor[e] = -1;
-    }
-
-    // Cover-anchor selection: V4-FILTERED rows first (so each filter binds at a FIXED
-    // level right under the root on EVERY branch -- K16-style sharding; without this
-    // the binding depth floats per branch and the pruning leaks down the tree), then
-    // the lowest uncovered edge. Sound: the exact-cover anchor order is a free
-    // deterministic choice (orderly-generation argument is anchor-agnostic; coverGen
-    // restricts its stabilizer to anchor-fixing generators whatever the anchor is).
-    // With no filters this is byte-identical to the plain lowest-uncovered rule.
-    inline void pickAnchor(int& u0, int& v0) {
-        u0 = -1; v0 = -1;
-        for (int i = 0; i < sh->nV4; i++) {
-            const int r = sh->v4Row[i];
-            if (!covered[0][r]) { u0 = 0; v0 = r; return; }
-        }
-        for (int u = 0; u < N && u0 < 0; u++) for (int v = u + 1; v < N; v++) if (!covered[u][v]) { u0 = u; v0 = v; break; }
     }
 
     // every edge of a G-orbit member must be free, so the image of any edge we place
@@ -1316,34 +1325,20 @@ struct RepWorker {
         for (const auto& g : sh->gElems) orbit.push_back(applyAlpha(M, g.data()));
         std::sort(orbit.begin(), orbit.end());
         orbit.erase(std::unique(orbit.begin(), orbit.end()), orbit.end());
-        // V4 shard filters: every committed factor must satisfy F[0]==row <=> F[1]==val
-        // (a factor pairing 1-with-val while pairing 0-with-another-row would steal edge
-        // {1,val} from the row's factor, so it can never be part of a shard solution).
-        // Checked on every orbit member: the members pair 0 with different partners.
-        for (int i = 0; i < sh->nV4; i++) {
-            const uint8_t r = sh->v4Row[i], v = sh->v4Val[i];
-            for (const auto& F : orbit)
-                if ((F[0] == r) != (F[1] == v)) return false;
-        }
-        // F-vs-chosen is REDUNDANT when the closure prune is on: genM's per-edge closure ban already
-        // guarantees every generated factor is Hamiltonian with every chosen factor (that is exactly
-        // what makes the leaf check "still validates" only under REP_NOPRUNE). So only re-check here
-        // when the prune is OFF. The orbit-INTERNAL check (F vs sigma0 F) is NOT covered by genM (sigma0 F
-        // is not in chosen), so it is always needed.
+        // [ROW] the WHOLE orbit is tested: the factor covering {0,r} may be an image of M, not M itself.
+        if (!g_rowPins.empty()) for (const auto& F : orbit) for (const auto& pn : g_rowPins) if (F[0] == pn.first && F[1] != pn.second) return false;
+        // F-vs-chosen redundant when the closure prune is on (genM already guarantees it); see k18a2rep.
         if (g_noClosurePrune) for (const auto& F : orbit) for (const auto& C : chosen) if (!is_perfect(F, C)) return false;
-        // [PERF PROBE] REP_NOORBCHK: skip the orbit-INTERNAL is_perfect (F vs sigma0 F). genM's closure
-        // ban cannot cover it (sigma0 F is not in `chosen`), so it is nominally always needed -- but
-        // REP_GENSTAT measured 0 rejections here across ~28M candidates in a t9 a=0 block, i.e. it never
-        // fires. This flag exists to MEASURE what it costs; it is NOT sound to enable for a census until
-        // the redundancy is proven, since a miss would admit an invalid factor pair.
-        if (!g_noOrbChk)
-            for (size_t x = 0; x < orbit.size(); x++) for (size_t y = x + 1; y < orbit.size(); y++) if (!is_perfect(orbit[x], orbit[y])) return false;
+        for (size_t x = 0; x < orbit.size(); x++) for (size_t y = x + 1; y < orbit.size(); y++) if (!is_perfect(orbit[x], orbit[y])) return false;
         return true;
     }
 
+    inline void pickAnchor(int& u0, int& v0) {   // cover anchor = lowest uncovered edge (k14 has no V4 shard filters)
+        u0 = -1; v0 = -1;
+        for (int u = 0; u < N && u0 < 0; u++) for (int v = u + 1; v < N; v++) if (!covered[u][v]) { u0 = u; v0 = v; break; }
+    }
+
     void commitOrbit(const std::vector<Match>& orbit) {   // append the orbit's factors
-        if (cSet)   // COMPLETEPREFIX only (member ptrs set by that path): the factor covering {0,3} (F[0]==3) is the level-3 coordinate c; record its orbit
-            for (const auto& F : orbit) if (F[0] == 3) { long long cr = cRankCanon(F, sh->gElems); std::lock_guard<std::mutex> lk(*cMtx); cSet->insert(cr); }
         commitRows(orbit.data(), (int)orbit.size());
     }
 
@@ -1351,8 +1346,6 @@ struct RepWorker {
     // orbit's rows contiguously in its OrbEnt, so the local recursion commits straight from there
     // instead of first copying them into a std::vector to satisfy commitOrbit's signature.
     void commitRows(const Match* rows, int n) {           // append n factors
-        { int cs = (int)chosen.size() + n; int pv = g_maxDepth.load(std::memory_order_relaxed);   // diagnostic: track deepest partial cover (BFS + coverGen + list paths)
-          while (cs > pv && !g_maxDepth.compare_exchange_weak(pv, cs, std::memory_order_relaxed)) {} }
         for (int i = 0; i < n; i++) {
             const Match& F = rows[i];
             int fidx = (int)chosen.size();
@@ -1406,7 +1399,7 @@ struct RepWorker {
                     // two pick different representatives of the same class.
                     std::string s; s.reserve(NM * N);         // serialized relabeled P1F, as src pairs
                     for (auto& g : rel) { unsigned char sc[N]; adj_to_src(g.data(), sc); s.append((const char*)sc, N); }
-                    if (first || s < best) { best = s; first = false; bestCount = 1; bestAdj.clear(); for (auto& g2 : rel) for (int u2 = 0; u2 < N; u2++) bestAdj.push_back((char)g2[u2]); memcpy(t_canonP.data(), p, N); }   // [INFO] keep the winning relabeling
+                    if (first || s < best) { best = s; first = false; bestCount = 1; bestAdj.clear(); for (auto& g2 : rel) for (int u2 = 0; u2 < N; u2++) bestAdj.push_back((char)g2[u2]); }
                     else if (s == best) bestCount++;
                 }
             }
@@ -1415,21 +1408,19 @@ struct RepWorker {
         return bestAdj;   // adjacency form of the src-minimal frame
     }
 
-
-    // [DIAG] REP_PATSTAT: sigma0 stay/swap pattern of the committed factors in commit order
-    // (S = sigma0-fixed/stay factor, W = sigma0-paired/swap factor).
+    // [PORT] REP_PATSTAT: stay/swap pattern of the committed factors in commit order (S=alpha-fixed, W=alpha-paired).
     std::string patSeq() const {
         std::string s; s.reserve(chosen.size());
         for (const auto& F : chosen) s += (applyAlpha(F, sh->alpha) == F) ? 'S' : 'W';
         return s;
     }
 
-    // [INFO] the cover's stay/swap pattern in ITS OWN (pre-canonization) labeling, indexed by
-    // neighbour-0: position j-1 is the type of the row whose 0-neighbour is j. Same convention as
-    // the pattern filter, so a logged pattern can be fed straight back as REP_PATTERN.
-    std::string patN0() const {
-        std::string s; s.reserve(N - 1);
-        for (int j = 1; j < N; j++) s += patRowType(j);
+    // [REP_PATBYCLASS] pattern indexed by the VALUE of 0's neighbour: position j-1 = the factor with F[0]==j
+    // (1-indexed neighbour value, NOT commit order). Positions 1,2,3 are thus the fixed 3-row starter factors
+    // (0~1, 0~2, 0~3). Complete cover => 0 is matched to each of 1..N-1 exactly once, so all positions fill.
+    std::string patSeqNbr0() const {
+        std::string s(chosen.size(), '?');
+        for (const auto& F : chosen) { int j = F[0]; if (j >= 1 && j <= (int)chosen.size()) s[j - 1] = (applyAlpha(F, sh->alpha) == F) ? 'S' : 'W'; }
         return s;
     }
 
@@ -1440,29 +1431,21 @@ struct RepWorker {
     }
 
     // [PATFILTER] NEIGHBOUR-0 pattern filter: each committed factor's aut-type must match the target at
-    // position F[0]-1 (0's neighbour, 1..N-1). S = sigma0-fixed, W = sigma0-paired.
-    //  * SET mode (g_patOnly non-empty): target = g_patOnly string.
-    //  * CALCULATE (empty): row1=S; rows {2,3} give one S/one W (one-per-pair), and that {2,3} pair is
-    //    DUPLICATED across every pair (even pos -> row2 type, odd -> row3 type). In the a=4 block r2=S,r3=W
-    //    is guaranteed (F2 stay, F3 forced swap), so r2==r3 is an internal error there.
+    // position F[0]-1 (0's neighbour value, 1..N-1). S = alpha-fixed, W = alpha-paired.
+    //  * SET mode    (g_patOnly non-empty): target = g_patOnly string.
+    //  * CALCULATE   (g_patOnly empty): target from the automorphism -- row1=S; rows {2,3} give one S/one W
+    //    (one-per-pair), and that {2,3} pair is DUPLICATED across every pair (even pos -> row2 type, odd ->
+    //    row3 type). If rows 2 and 3 come out the SAME type, the one-per-pair rule is broken => internal error.
     bool patOK() const {
         char r2 = 'S', r3 = 'W';
         if (g_patOnly.empty()) {                               // calculate mode
             r2 = patRowType(2); r3 = patRowType(3);
-            if (r2 == '?' || r3 == '?') return true;           // rows 2,3 not both committed yet
-            if (r2 == r3) {                                    // a=4 block guarantees r2=S,r3=W -> a genuine bug if here
-                printf("[PATFILTER] INTERNAL ERROR: row2 and row3 same type (%c) -- one-per-pair violated. Starter:\n  ", r2);
-                for (int fi = 0; fi < 3 && fi < (int)chosen.size(); fi++) { for (int u = 0; u < N; u++) if (u < chosen[fi][u]) printf("%d-%d ", u, (int)chosen[fi][u]); printf("| "); }
-                printf("\n"); fflush(stdout); exit(1);
-            }
-            static std::atomic<bool> printed{ false }; bool exp = false;   // [DIAG] print the calculated target once
-            if (printed.compare_exchange_strong(exp, true)) {
-                std::string tgt(1, 'S'); for (int k = 2; k < N; k++) tgt += (k % 2 == 0) ? r2 : r3;
-                printf("[PATFILTER] calculated target (r2=%c r3=%c): %s\n", r2, r3, tgt.c_str()); fflush(stdout);
-            }
+            if (r2 == '?' || r3 == '?') return true;           // rows 2,3 not both committed yet -> no filtering
+            if (r2 == r3) return false;                        // both same type => pair {2,3} not one-per-pair => doomed, prune
+            // (in the K18 a=4 block r2=S,r3=W is guaranteed; a hard guard belongs there, not in the free K14 search)
         }
         for (const auto& F : chosen) {
-            int k = F[0];
+            int k = F[0];                                      // 0's neighbour = the pattern position (1..N-1)
             char expected;
             if (!g_patOnly.empty()) { if (k < 1 || k >(int)g_patOnly.size()) return false; expected = g_patOnly[k - 1]; }
             else expected = (k == 1) ? 'S' : ((k % 2 == 0) ? r2 : r3);   // calculate: dup {2,3} across pairs
@@ -1472,38 +1455,11 @@ struct RepWorker {
         return true;
     }
 
-    // [PATFILTER] REP_PATPAIR one-per-pair: within each sigma0 position-pair {2k,2k+1} (partner-of-0 vertices),
-    // the two committed factors must have DIFFERENT aut-type (one S, one W). Sound+complete |Aut|=2 filter
-    // (both-stays => 4-cycle => |Aut|>2), independent of any fixed pattern. Position 1 (partner 0<->1) is the
-    // lone sigma0-fixed factor and has no pair partner, so it is exempt.
-    bool patPairOK() const {
-        for (const auto& F : chosen) {
-            int k = F[0];
-            if (k < 2) continue;                               // position 1 has no pair partner
-            char tp = patRowType(k ^ 1);                       // type of the pair-partner factor (partner-of-0 = k^1), '?' if not yet committed
-            if (tp == '?') continue;
-            char t = (applyAlpha(F, sh->alpha) == F) ? 'S' : 'W';
-            if (t == tp) return false;                         // both members of the pair same type -> reject
-        }
-        return true;
-    }
-
     void emit() {
         g_blockCovers.fetch_add(1, std::memory_order_relaxed);   // raw complete-cover count for the per-block estimate log
-        g_emits.fetch_add(1, std::memory_order_relaxed);         // total results = every complete cover (new + rejected re-detections)
-        static const bool dumpFirst = std::getenv("REP_DUMPFIRST") != nullptr;   // [PERF] hoisted: emit() is per complete cover
-        if (dumpFirst) {                             // [VALIDATION] dump the FIRST complete cover (its sigma0-labeling), then stop
-            static std::atomic<int> dumped{ 0 };
-            if (dumped.fetch_add(1) == 0) {
-                FILE* df = fopen("dump_cover.txt", "w");
-                if (df) { for (const Match& f : chosen) { for (int u = 0; u < N; u++) if (u < f[u]) fprintf(df, "%d %d ", u, (int)f[u]); fprintf(df, "\n"); } fclose(df); }
-                printf("[DUMPFIRST] first cover dumped (%d factors) -> dump_cover.txt\n", (int)chosen.size()); fflush(stdout);
-                g_stop.store(true);
-            }
-        }
         std::string key = canonKey(chosen);          // labeling-independent class key (sets lastAut = 2*|Aut|)
 
-        // [REP_OWNER] Two rejections, in this order, before anything is recorded:
+        // [BLOCK/OWNER + AUT2ONLY] ported verbatim from k18a2rep.cpp
         //
         //   1. the SAME-BLOCK repeat. This block already yielded this class -- e.g. block
         //      4.0.17607 reaches class #2 by two different covers. Both have the same owner,
@@ -1557,30 +1513,32 @@ struct RepWorker {
         }
         if (g_ownerMode) { std::lock_guard<std::mutex> lk(g_harvest_mtx); g_ownerSaved++; }
 
-        if (g_patStat) { std::string p = patSeq(); std::lock_guard<std::mutex> lk(g_pat_mtx); auto& e = g_patEmit[p]; e.first++; e.second = lastAut; }   // [DIAG] REP_PATSTAT: completion pattern + |Aut|
-        if (g_pDump) {   // [DIAG] REP_PDUMP: row-pairing involution of this completion, search frame
-            const uint8_t* al = sh->alpha; const int z = al[0];   // sigma0 partner of vertex 0
-            int pv[N]; for (int i = 0; i < N; i++) pv[i] = -1;
-            for (const Match& F : chosen) pv[F[0]] = al[F[z]];
-            std::string s; char t[16];
-            for (int x = 1; x < N; x++) { if (pv[x] < 0) continue; snprintf(t, sizeof(t), "%d:%d,", x, pv[x]); s += t; }
-            std::lock_guard<std::mutex> lk(g_pdump_mtx); g_pSeen[s]++;
+        if (g_patStat || g_patByClass) {   // [PORT] REP_PATSTAT + [REP_PATBYCLASS]: record on EVERY detection (before the dedup below)
+            std::string p, q;
+            if (g_patStat)    p = patSeq();        // commit-order pattern (existing tally)
+            if (g_patByClass) q = patSeqNbr0();    // neighbour-0-indexed pattern (per-class collection)
+            std::lock_guard<std::mutex> lk(g_pat_mtx);
+            if (g_patStat) { auto& e = g_patEmit[p]; e.first++; e.second = lastAut; }
+            if (g_patByClass) { auto& cm = g_patClassPats[key]; if (cm.empty()) { g_patClassFirst[key] = q; g_patClassAut[key] = lastAut; } cm[q]++; }
         }
         bool localNew = canon.insert(key).second;    // first time THIS worker sees the class
-        if (localNew) autOf[key] = lastAut;
+        if (localNew) {
+            autOf[key] = lastAut;
+            g_emits.fetch_add(1, std::memory_order_relaxed);  // (approx; merged-dedup is exact)
+        }
         {
             std::lock_guard<std::mutex> lk(g_harvest_mtx);   // exact cross-worker tracking + capture-recapture
             // EVERY leaf detection counts (also re-finds): the f1/f2 spectrum feeds the
             // Chao1 richness estimate printed in the [rep] line.
             long long cdet = ++g_harvest[key];
-            if (cdet > 1) {
-                g_dupCovers.fetch_add(1, std::memory_order_relaxed);   // re-detection of a known class = rejected duplicate
-            }
             if (cdet == 1) {
                 g_f1.fetch_add(1, std::memory_order_relaxed); g_banked.store((int)g_harvest.size(), std::memory_order_relaxed);
-                g_autHist[lastAut / 2]++;   // live |Aut| distribution (lastAut = 2*|Aut|); under g_harvest_mtx
-                static const bool printEach = std::getenv("REP_PRINTEACH") != nullptr;   // per-result console line (restored)
-                if (printEach) { printf("[emit] new class #%d  |Aut|=%d\n", (int)g_harvest.size(), lastAut / 2); fflush(stdout); }
+                static const bool blockDump = std::getenv("REP_BLOCKDUMP") != nullptr;   // [PERF] read once, like k18's REP_DUMPFIRST
+                if (blockDump) {   // [DIAG] the first-found "block" = F1/F2/F3 commit prefix of each distinct class
+                    std::string b;
+                    for (int fi = 0; fi < NM && fi < (int)chosen.size(); fi++) { for (int u = 0; u < N; u++) if (u < chosen[fi][u]) { char t[12]; snprintf(t, sizeof(t), "%d-%d ", u, (int)chosen[fi][u]); b += t; } b += "| "; }
+                    printf("[BLOCK] |Aut|=%-3d F1F2F3= %s\n", lastAut / 2, b.c_str()); fflush(stdout);
+                }
                 // send the NEW class to the normal result pipeline IMMEDIATELY. The mutex
                 // serializes the host callback (it never runs concurrently), so long runs
                 // deliver results as they are found instead of at order end.
@@ -1600,19 +1558,6 @@ struct RepWorker {
                     for (int k = 0; k < NM; k++) { uint8_t adj[N]; for (int u = 0; u < N; u++) adj[u] = (uint8_t)key[k * N + u]; adj_to_src(adj, src + k * N); }
                     g_sendResult(src, lastAut / 2);
                 }
-                if (g_printRawLeft > 0) {   // [DIAG] REP_PRINTRAW: the alpha-frame cover as the
-                    g_printRawLeft--;       // search built it (rows sorted by partner of vertex 0)
-                    std::vector<Match> fs(chosen.begin(), chosen.end());
-                    std::sort(fs.begin(), fs.end(), [](const Match& a, const Match& b) { return a[0] < b[0]; });
-                    printf("\n[K18-REP] RAW search-frame cover, class #%zu (v4Row = partner of 0, v4 = partner of 1):\n", g_harvest.size());
-                    for (const auto& F : fs) {
-                        unsigned char s[N]; adj_to_src(F.data(), s);
-                        printf("  \"");
-                        for (int i = 0; i < N; i++) printf(" %2d", s[i]);
-                        printf(" \"\n");
-                    }
-                    fflush(stdout);
-                }
             }
             else if (cdet == 2) { g_f1.fetch_sub(1, std::memory_order_relaxed); g_f2.fetch_add(1, std::memory_order_relaxed); }
             else if (cdet == 3) { g_f2.fetch_sub(1, std::memory_order_relaxed); }
@@ -1625,8 +1570,44 @@ struct RepWorker {
         if (!buildAndValidateOrbit(M, orbit)) return;
         size_t base = chosen.size();  // roll-back point
         commitOrbit(orbit);
+        if (splitOut && levelNow + 1 == splitLevel) {   // [SPLIT] harvest: save this level-L branch, do not search it
+            splitOut->push_back({ chosen, active });
+            splitPar->push_back(splitParents - 1);      // its level-(L-1) parent, numbered within this block
+            rollbackTo(base);
+            return;
+        }
+        if (splitOut && levelNow + 1 == splitLevel - 1) splitParents++;   // a level-(L-1) node: the next parent
+        levelNow++;
         cover(active);                // recurse on the rest of the cover
+        levelNow--;
         rollbackTo(base);
+    }
+    // [SPLIT] REP_SPLIT: a level-L branch = the factors committed to reach it + the stabilizer its
+    // cover() call receives. Resuming it (clearState, commitOrbit(factors), cover(stab)) makes exactly
+    // the call the unsplit search makes, so the same tree and the same node counts.
+    using SplitBranch = std::pair<std::vector<Match>, std::vector<int>>;
+    std::vector<SplitBranch>* splitOut = nullptr;   // non-null = harvest mode
+    std::vector<long long>* splitPar = nullptr;     // per branch: its level-(L-1) parent within the block
+    long long splitParents = 0;                     // level-(L-1) nodes seen so far in this block
+    int splitLevel = 0, levelNow = 0;               // levelNow = orbits committed on this path (root = 1)
+
+    // ---- [PORT k18] t9 a=4 block machinery, verbatim from k18a2rep.cpp (REP_ROW4 and the V4 shard
+    // filters, which knA2 does not carry, removed from collectRow's dispatch) ----
+
+    // [PATFILTER] REP_PATPAIR one-per-pair: within each sigma0 position-pair {2k,2k+1} (partner-of-0 vertices),
+    // the two committed factors must have DIFFERENT aut-type (one S, one W). Sound+complete |Aut|=2 filter
+    // (both-stays => 4-cycle => |Aut|>2), independent of any fixed pattern. Position 1 (partner 0<->1) is the
+    // lone sigma0-fixed factor and has no pair partner, so it is exempt.
+    bool patPairOK() const {
+        for (const auto& F : chosen) {
+            int k = F[0];
+            if (k < 2) continue;                               // position 1 has no pair partner
+            char tp = patRowType(k ^ 1);                       // type of the pair-partner factor (partner-of-0 = k^1), '?' if not yet committed
+            if (tp == '?') continue;
+            char t = (applyAlpha(F, sh->alpha) == F) ? 'S' : 'W';
+            if (t == tp) return false;                         // both members of the pair same type -> reject
+        }
+        return true;
     }
 
     // [SGEN] Dedicated generator for a row whose type is already FORCED to S (its sigma0 pair partner is
@@ -1665,35 +1646,16 @@ struct RepWorker {
         }
     }
 
-    // [DIAGPROBE] Does ANY sigma0-fixed factor exist on the leftover graph that contains the seeded
-    // diagonal and is Hamiltonian with every committed row? Same quotient walk as genS, but it returns
-    // on the FIRST one instead of collecting -- cheap while candidates are plentiful, expensive exactly
-    // when it is about to report none. a=4 rule: a fixed factor carries exactly one diagonal, so no
-    // second diagonal may be placed (that is the `~(1u << um)` term).
-    // [SPRUNE] Hamiltonicity is enforced INCREMENTALLY, with genM's closure ban, rather than at the
-    // leaf. A VTune profile of the a=4 fast path put this function and its leaf is_perfect loop at
-    // ~68% of all CPU: enforced at the leaf, a dead diagonal costs a complete exhaustive failed
-    // search, because nothing is rejected before a whole matching exists. Instead sPE
-    // holds, per committed row, the far end of the alternating path through each free vertex, and an
-    // edge (x,y) is refused when y is the far end of x's path in ANY row -- that edge would close a
-    // cycle shorter than N with that row. The one exception is the last edge of the matching, whose
-    // closure IS the Hamiltonian N-cycle. A completed matching therefore has every row Hamiltonian by
-    // construction and the leaf test is gone.
-    // Same answer as before: a branch this refuses can never complete to a matching Hamiltonian with
-    // that row, so no witness is lost; and every witness it accepts passed the same condition the old
-    // leaf loop tested. The census tree is untouched (this decides a node's fate, not its children).
-    // sPE is genM's path_end, kept as its own array so the prune cannot disturb an enumeration in flight.
+    // [SPRUNE] Does ANY sigma0-fixed factor exist on the leftover graph that contains the seeded diagonal
+    // and is Hamiltonian with every committed row? Returns on the FIRST one. Hamiltonicity is enforced
+    // INCREMENTALLY with genM's closure ban on sPE (an edge (x,y) is refused when y is the far end of x's
+    // path in ANY row), except for the last edge of the matching, whose closure IS the Hamiltonian N-cycle.
+    // a=4 rule: a fixed factor carries exactly one diagonal, so no second diagonal may be placed.
     bool sExists(Match& M, uint32_t usedMask, int edges) {      // edges = matching edges placed so far
         uint32_t freeMask = ~usedMask & FULLMASK;
         if (!freeMask) return true;                              // every edge passed the ban => Hamiltonian with every row
         const int nchosen = (int)chosen.size();
-        // [MRV] Branch on the free sigma0 pair with the FEWEST admissible partners, not the lowest one:
-        // a dead diagonal then fails within a few nodes instead of after the lowest vertex's partners
-        // are all exhausted, and an empty partner set ends the search on the spot. The partner set of
-        // u is: free, edge {u,v} uncovered, v not u's own pair, v not the far end of u's path in any
-        // committed row (that edge would close a short cycle -- (u,v) is never the last edge, its
-        // mirror follows it), and the mirror edge {u^1,v^1} uncovered. Free vertices come in whole
-        // pairs (edges are placed with their mirrors), so one member per pair is enough to scan.
+        // [MRV] Branch on the free sigma0 pair with the FEWEST admissible partners, not the lowest one.
         uint32_t cand = 0; unsigned u = 0; int bestCnt = 1 << 30;
         for (uint32_t fm = freeMask; fm; ) {
             unsigned long x; _BitScanForward(&x, fm); fm &= fm - 1;
@@ -1744,25 +1706,16 @@ struct RepWorker {
         if (live) { dgWit[nchosen][d >> 1] = M; dgWitValid[nchosen] |= 1u << (d >> 1); }   // [WITNESS] kept for the children
         return live;
     }
-    // [WITNESS] Does the parent's witness for a diagonal still prove it here? It was found
-    // against the parent's covered edges and rows, so only the rows committed since (from..m-1) and the
-    // edges they covered need testing: the diagonal, the sigma0 symmetry and the one-diagonal rule are
-    // properties of the matching itself. A witness that holds IS a realization, the same object the
-    // search would have produced, so the answer is unchanged -- only the search is skipped.
+    // [WITNESS] Does the parent's witness for a diagonal still prove it here? Only the rows committed
+    // since (from..m-1) and the edges they covered need testing.
     bool witnessHolds(const Match& W, int from) const {
         for (int u = 0; u < N; u++) if ((coveredBits[u] >> W[u]) & 1u) return false;   // an edge of W is covered now
         const int m = (int)chosen.size();
         for (int k = from; k < m; k++) if (!is_perfect(W, chosen[k])) return false;
         return true;
     }
-    // Is some uncovered diagonal unrealizable at this node? Used both by the measurement (diagProbe)
-    // and by the prune (REP_DIAGPRUNE), so the two can never disagree.
-    // parentSize = the row count of the node whose witnesses may be reused (-1: none). The measured
-    // cost split (blocks 1777-1780, 8 threads): 141M diagRealizable calls for 64M census nodes, 60% of
-    // them live, each search only ~10-14 sExists nodes -- so the price is the NUMBER of searches and
-    // their setup, not their depth. A live diagonal at the parent usually stays live at the child with
-    // the SAME matching, and checking that costs one edge scan plus is_perfect against the new rows.
-    // The diagonals whose witness broke are the ones worth searching, and they are searched first.
+    // Is some uncovered diagonal unrealizable at this node? parentSize = the row count of the node whose
+    // witnesses may be reused (-1: none). Diagonals whose witness broke are searched; the rest are reused.
     bool deadDiagonal(int parentSize) {
         const int m = (int)chosen.size();
         uint32_t todo = 0;
@@ -1782,12 +1735,6 @@ struct RepWorker {
         }
         return false;
     }
-    void diagProbe() {                                           // records only -- never prunes
-        int depth = (int)chosen.size(); if (depth > NM + 1) return;
-        bool dead = deadDiagonal(-1);
-        std::lock_guard<std::mutex> lk(g_diag_mtx);
-        g_diagProbes[depth]++; if (dead) g_diagHits[depth]++;
-    }
     // [FILTER] REP_DIAGPRUNE: true when this node is provably unable to complete.
     bool diagPruned(int parentSize = -1) {
         const int depth = (int)chosen.size();
@@ -1800,12 +1747,19 @@ struct RepWorker {
     // [SGEN] Row dispatch: a row whose sigma0 pair partner is already committed as W is FORCED to S, so it is
     // enumerated on the quotient by genS (only sigma0-fixed matchings) instead of filtering genM output. An S
     // factor also holds the mirror {1, v0^1} of the anchor edge {0,v0}: seeding both keeps the free-vertex set
-    // sigma0-closed, which genS relies on. Falls back to genM whenever the shard filters bind vertex 1 or the
-    // anchor is not at vertex 0.
+    // sigma0-closed, which genS relies on. Falls back to genM whenever the anchor is not at vertex 0.
+    void collectAt(int u0, int v0, std::vector<Match>& cands) {   // every candidate matching through edge {u0,v0}
+        const int nchosen = (int)chosen.size();
+        for (int k = 0; k < nchosen; k++) for (int x = 0; x < N; x++) path_end[k][x] = chosen[k][x];  // reset path_end
+        Match M; for (int i = 0; i < N; i++) M[i] = 0xFF;     // matching being built (0xFF = unset)
+        uint32_t usedM = (1u << u0) | (1u << v0);             // vertices already matched (anchor edge forced)
+        M[u0] = (uint8_t)v0; M[v0] = (uint8_t)u0;
+        for (int k = 0; k < nchosen; k++) { uint8_t eu = path_end[k][u0], ev = path_end[k][v0]; path_end[k][eu] = ev; path_end[k][ev] = eu; }
+        collectRow(M, usedM, u0, v0, cands);
+    }
+
     void collectRow(Match& M, uint32_t usedM, int u0, int v0, std::vector<Match>& cands) {
-        // [ROW4] REP_ROW4=W pins row 4 to a swap factor, so the S-only generator must not serve that row.
-        const bool useS = g_sGen && g_typeMask && sh->nV4 == 0 && u0 == 0 && v0 != 1 && patRowType(v0 ^ 1) == 'W'
-                          && !(g_row4 == 'W' && v0 == 4);
+        const bool useS = g_sGen && g_typeMask && u0 == 0 && v0 != 1 && patRowType(v0 ^ 1) == 'W';
         collectInto = &cands;
         if (useS) {
             const uint32_t a = 1, b = (uint32_t)v0 ^ 1;
@@ -1831,14 +1785,18 @@ struct RepWorker {
     // recursive call restores it before returning). Group-image freeness tests the
     // SYMMETRIC coveredBits rows. Same source for every sibling N (sibling-code rule).
     void genM(Match& M, uint32_t usedMask, int edge_count) {
+        if (collectInto->size() >= collectCap) return;   // [MRV] enough candidates for this edge (it cannot be the anchor)
         uint32_t freeMask = ~usedMask & FULLMASK;
+        if (g_lvlStats) g_genCalls.fetch_add(1, std::memory_order_relaxed);   // [DIAG] REP_LEVELSTATS
+        if (g_gsym && edge_count == 1) {           // [GSYM] row 0 = the anchor edge, the one pair already in M
+            gsymInit();
+            unsigned long a0; _BitScanForward(&a0, usedMask);
+            if (!gsymStep(M, usedMask, (int)a0, M[a0], 0)) return;
+        }
         if (!freeMask) {                           // matching complete -> record the orbit member
-            const int gsLvl = g_genStat ? (int)chosen.size() : 0;   // [DIAG] REP_GENSTAT: level this candidate was built at
-            if (g_genStat && gsLvl < NM + 2) g_genMade[gsLvl].fetch_add(1, std::memory_order_relaxed);
-            if (buildAndValidateOrbit(M, orbScratch)) {   // reusable member buffer (no per-leaf alloc)
-                if (g_genStat && gsLvl < NM + 2) g_genKept[gsLvl].fetch_add(1, std::memory_order_relaxed);
-                collectInto->push_back(M);
-            }
+            const bool ok = buildAndValidateOrbit(M, orbScratch);
+            if (g_lvlStats) { g_genLeaves.fetch_add(1, std::memory_order_relaxed); if (ok) g_genPass.fetch_add(1, std::memory_order_relaxed); }
+            if (ok) collectInto->push_back(M);     // reusable member buffer (no per-leaf alloc)
             return;
         }
         unsigned long u; _BitScanForward(&u, freeMask);    // lowest still-unmatched vertex
@@ -1846,31 +1804,19 @@ struct RepWorker {
         uint8_t epu[NM];                           // epu[k]=path_end[k][u]: INVARIANT across the v-loop below
         for (int k = 0; k < nchosen; k++) epu[k] = path_end[k][u];   // (u fixed; closure ban keeps path_end[k][u] unwritten)
         uint32_t cand = freeMask & ~coveredBits[u] & (FULLMASK << (u + 1));  // free, unused edge, v > u
-        if (edge_count < NHALF - 1 && !g_noClosurePrune) {   // Hamiltonian-with-chosen pre-check (closure ban; REP_NOPRUNE disables)
+        if (edge_count < NHALF - 1) {              // Hamiltonian-with-chosen pre-check (closure ban)
             uint32_t hit = 0;
             for (int k = 0; k < nchosen; k++) hit |= 1u << epu[k];
             cand &= ~hit;
         }
-        if (u == 1) {   // V4 shard filters bind the partner of 1 once the factor's partner
-                        // of 0 (M[0], the cover anchor) is known; prune before recursing
-            for (int i = 0; i < sh->nV4; i++)
-                cand = (M[0] == sh->v4Row[i]) ? (cand & (1u << sh->v4Val[i]))
-                                              : (cand & ~(1u << sh->v4Val[i]));
-        }
-        // [TYPEMASK] The sigma0 TYPE of this factor and the POSITION of its orbit partner are both decided by
+        // [TYPEMASK] The alpha TYPE of this factor and the POSITION of its orbit partner are both decided by
         // the partner of vertex 1, so the (proven) one-per-pair rule becomes a mask here instead of a rejection
         // after the orbit is built. With kpos = M[0] = this factor's row (partner of 0):
-        //   F(1) == kpos^1            <=> sigma0-FIXED (S), the factor is its own orbit;
+        //   F(1) == kpos^1            <=> alpha-FIXED (S), the factor is its own orbit;
         //   F(1) == y otherwise       => W, and the image factor occupies row q = y^1.
         // One-per-pair (each pair {p,p^1} holds one S and one W) then rejects, before generating them:
         // an S when the pair partner is already S; a W when the pair partner is already W; and a W whose image
         // would land on a taken row, or in a pair that already holds its W (= the pair-connection restriction).
-        // [ROW4] REP_ROW4=S|W: pin the type of row 4 only. The type is decided by the partner of vertex 1:
-        // F(1) == kpos^1 is the sigma0-fixed (S) choice, anything else is W. Independent of REP_TYPEMASK.
-        if (u == 1 && g_row4 && M[0] == 4) {
-            if (g_row4 == 'S') cand &= (1u << (4 ^ 1));
-            else               cand &= ~(1u << (4 ^ 1));
-        }
         if (u == 1 && g_typeMask) {
             const int kpos = M[0];
             const char sib = patRowType(kpos ^ 1);
@@ -1890,10 +1836,10 @@ struct RepWorker {
             }
             cand &= allow;
         }
-        // [TYPEMASK] LEMMA: a factor holding a diagonal {u,u^1} is sigma0-FIXED -- its image holds that same
+        // [TYPEMASK] LEMMA: a factor holding a diagonal {u,u^1} is alpha-FIXED -- its image holds that same
         // edge, and two distinct factors cannot share one. So once vertex 1 has settled this factor as W
         // (M[1] != M[0]^1), NO diagonal may appear anywhere in it. Ban it per vertex, instead of generating
-        // the whole matching and only failing is_perfect(F, sigma0 F) in buildAndValidateOrbit at the leaf.
+        // the whole matching and only failing is_perfect(F, alpha F) in buildAndValidateOrbit at the leaf.
         if (g_typeMask && u >= 2 && M[1] != (M[0] ^ 1)) cand &= ~(1u << (u ^ 1));
         const uint32_t nextUsed = usedMask | (1u << u);
         const uint32_t uRow = (uint32_t)u * N;                 // edge id base: e = u*N + v (v > u here)
@@ -1927,7 +1873,8 @@ struct RepWorker {
                 for (; k < nchosen; k++, row += N) { const uint8_t a = epu[k], b = row[v]; epv[k] = b; row[a] = b; row[b] = a; }
             }
             M[u] = (uint8_t)v; M[v] = (uint8_t)u;
-            genM(M, nextUsed | (1u << v), edge_count + 1);
+            if (!g_gsym || gsymStep(M, nextUsed | (1u << v), (int)u, (int)v, edge_count))   // [GSYM]
+                genM(M, nextUsed | (1u << v), edge_count + 1);
             {   // undo
                 uint8_t* row = &path_end[0][0];
                 const uint8_t uu = (uint8_t)u, vv = (uint8_t)v;
@@ -1949,8 +1896,8 @@ struct RepWorker {
     // recurses into it). Unbiased estimator of the subtree cover-node count; variance
     // is high on skewed trees, so run many probes and read it as order-of-magnitude.
     double probeCover(const std::vector<int>& active, std::mt19937& rng) {
-        int u0, v0;                   // cover anchor (filtered rows first, then lowest uncovered)
-        pickAnchor(u0, v0);
+        int u0 = -1, v0 = -1;         // lowest uncovered edge (the cover anchor)
+        for (int u = 0; u < N && u0 < 0; u++) for (int v = u + 1; v < N; v++) if (!covered[u][v]) { u0 = u; v0 = v; break; }
         if (u0 < 0) return 1.0;
         if (!imgUncovered(u0, v0)) return 1.0;
         int nchosen = (int)chosen.size();
@@ -1994,41 +1941,6 @@ struct RepWorker {
         size_t base = chosen.size();
         commitOrbit(orbit);
         double sub = probeCover(kidStab[c], rng);
-        rollbackTo(base);
-        return 1.0 + (double)kcount * sub;
-    }
-
-    // [ESTIMATE MODE] over-cap sibling of probeCover: build the SAME deduped child list
-    // that coverGen() would explore (exact setwiseStab of the partial cover, then
-    // anchor-edge-stabilizer dedup), multiply the running weight by the child count,
-    // recurse into ONE uniformly-random child. Unbiased for the coverGen tree size.
-    double probeCoverGen(std::mt19937& rng) {
-        int u0, v0;                   // cover anchor (filtered rows first, then lowest uncovered)
-        pickAnchor(u0, v0);
-        if (u0 < 0) return 1.0;
-        if (!imgUncovered(u0, v0)) return 1.0;
-        int nchosen = (int)chosen.size();
-        for (int k = 0; k < nchosen; k++) for (int x = 0; x < N; x++) path_end[k][x] = chosen[k][x];
-        Match M; for (int i = 0; i < N; i++) M[i] = 0xFF;
-        uint32_t usedM = (1u << u0) | (1u << v0);
-        M[u0] = (uint8_t)v0; M[v0] = (uint8_t)u0;
-        for (int k = 0; k < nchosen; k++) { uint8_t eu = path_end[k][u0], ev = path_end[k][v0]; path_end[k][eu] = ev; path_end[k][ev] = eu; }
-        std::vector<Match> cands;
-        collectInto = &cands; genM(M, usedM, 1); collectInto = nullptr;
-        if (cands.empty()) return 1.0;
-        std::unordered_map<std::string, int> keyIdx; std::vector<std::string> keys; std::vector<Match> reps;
-        for (auto& C : cands) { std::string k = orbitKey(C, sh->gElems); if (keyIdx.emplace(k, (int)reps.size()).second) { keys.push_back(std::move(k)); reps.push_back(C); } }
-        std::vector<Perm> Gp = cgt::setwiseStab<N>(sh->rootBSGS, chosen, covered);
-        std::vector<int> repIdx;
-        if (Gp.empty()) { for (size_t i = 0; i < reps.size(); i++) repIdx.push_back((int)i); }
-        else { std::vector<Perm> hgens = cgt::edgeStabGens<N>(Gp, u0, v0); std::vector<std::vector<Perm>> stabs; schreierDedup(reps, keys, keyIdx, hgens, sh->gElems, repIdx, stabs); }
-        int kcount = (int)repIdx.size();
-        std::uniform_int_distribution<int> pickk(0, kcount - 1);
-        std::vector<Match> orbit;
-        if (!buildAndValidateOrbit(reps[repIdx[pickk(rng)]], orbit)) return 1.0;   // picked child contributes 0 nodes
-        size_t base = chosen.size();
-        commitOrbit(orbit);
-        double sub = probeCoverGen(rng);
         rollbackTo(base);
         return 1.0 + (double)kcount * sub;
     }
@@ -2082,53 +1994,150 @@ struct RepWorker {
         nodes++; nodes_flush++;
         progressTick(nodes_flush, g_nodes);
         if (g_stop.load(std::memory_order_relaxed)) return;   // harvest target reached -> unwind the search
+        if (capAt && nodes > capAt) return;                   // [SPLIT] REP_SPLITSAMPLE: this branch hit its node cap
+        if (g_lvlStats) { int m = (int)chosen.size(); if (m < NM + 2) g_lvlReached[m].fetch_add(1, std::memory_order_relaxed); }   // [DIAG] REP_LEVELSTATS
+        if (g_f17dump && (int)chosen.size() >= NM - 2) f17Sample();   // [DIAG] REP_F17DUMP: forced-completion sampler (enumerable path; rem 1 or 2 factors)
+        if (g_patStat && (int)chosen.size() == NM - 1) { std::string p = patSeq(); std::lock_guard<std::mutex> lk(g_pat_mtx); g_patF17[p]++; }   // [PORT] REP_PATSTAT: forced-last-factor pattern tally
+        if (g_patApply && !patOK()) return;   // [PATFILTER] neighbour-0 reject (set target or calculated)
 
-        int u0, v0;                   // cover anchor (filtered rows first, then lowest uncovered)
-        pickAnchor(u0, v0);
+        // [CANONTEST] REP_CANONTEST: validate the brute C(sigma0) smallest-image is a CLASS INVARIANT
+        // on real partial covers -- canonC_brute(g.P) must equal canonC_brute(P) for every g in C(sigma0).
+        // Bounded to the first ~50 partials so the self-check run stays a few seconds.
+        if (g_canonTest && !chosen.empty() && !sh->Calpha.empty()) {
+            static std::atomic<int> budget{ 50 };
+            if (budget.fetch_sub(1) > 0) {
+                const std::vector<Perm>& C = sh->Calpha;
+                std::string base = canonC_brute(chosen, C);
+                bool ok = true;
+                size_t step = C.size() / 3 + 1;                        // ~3 sampled group elements
+                for (size_t gi = 0; gi < C.size() && ok; gi += step) {
+                    std::vector<Match> img(chosen.size());
+                    for (size_t i = 0; i < chosen.size(); i++) img[i] = applyAlpha(chosen[i], C[gi].data());
+                    if (canonC_brute(img, C) != base) ok = false;      // invariance under g in C(sigma0)
+                }
+                static std::atomic<int> nchk{ 0 }, nfail{ 0 };
+                int c = ++nchk; if (!ok) ++nfail;
+                printf("[CANONTEST] partial #%d (%d factors): %s  [total %d checks, %d FAIL]\n",
+                       c, (int)chosen.size(), ok ? "PASS" : "FAIL", (int)nchk, (int)nfail);
+                fflush(stdout);
+            }
+        }
+
+        // [VTEST] REP_VTEST: validate the vertex-order minimal image canonV_brute is a CLASS INVARIANT
+        // (canonV_brute(g.P) == canonV_brute(P) for g in C(sigma0)) -- the oracle for the fast backtracking.
+        if (g_vTest && !chosen.empty() && !sh->Calpha.empty()) {
+            static std::atomic<int> vbudget{ 50 };
+            if (vbudget.fetch_sub(1) > 0) {
+                const std::vector<Perm>& C = sh->Calpha;
+                Perm rho = buildRhoStd(sh->alpha);
+                uint8_t base[NEDGES]; canonV_brute(chosen, C, rho, base);
+                bool ok = true;
+                size_t step = C.size() / 3 + 1;                        // ~3 sampled group elements
+                for (size_t gi = 0; gi < C.size() && ok; gi += step) {
+                    std::vector<Match> img(chosen.size());
+                    for (size_t i = 0; i < chosen.size(); i++) img[i] = applyAlpha(chosen[i], C[gi].data());
+                    uint8_t v[NEDGES]; canonV_brute(img, C, rho, v);
+                    if (memcmp(v, base, NEDGES) != 0) ok = false;      // invariance under g in C(sigma0)
+                }
+                static std::atomic<int> vn{ 0 }, vf{ 0 };
+                int c = ++vn; if (!ok) ++vf;
+                printf("[VTEST] partial #%d (%d factors): %s  [total %d checks, %d FAIL]\n",
+                       c, (int)chosen.size(), ok ? "PASS" : "FAIL", (int)vn, (int)vf);
+                fflush(stdout);
+            }
+        }
+
+        // [FTEST] REP_FTEST: validate the FAST backtracking minimal image == the brute oracle, on real partials.
+        if (g_fTest && !chosen.empty() && !sh->Calpha.empty()) {
+            static std::atomic<int> fbudget{ 200 };
+            if (fbudget.fetch_sub(1) > 0) {
+                Perm rho = buildRhoStd(sh->alpha);
+                uint8_t vb[NEDGES], vf2[NEDGES];
+                canonV_brute(chosen, sh->Calpha, rho, vb);
+                canonV_fast(chosen, sh->alpha, vf2);
+                bool ok = (memcmp(vb, vf2, NEDGES) == 0);
+                static std::atomic<int> fn{ 0 }, ff{ 0 };
+                int c = ++fn; if (!ok) ++ff;
+                if (!ok || c <= 5 || (c % 50) == 0)
+                    printf("[FTEST] partial #%d (%d factors): %s  [total %d checks, %d FAIL]\n",
+                           c, (int)chosen.size(), ok ? "PASS" : "FAIL", (int)fn, (int)ff);
+                fflush(stdout);
+            }
+        }
+
+        int u0 = -1, v0 = -1;         // endpoints of the lowest uncovered edge (the cover anchor)
+        for (int u = 0; u < N && u0 < 0; u++) for (int v = u + 1; v < N; v++) if (!covered[u][v]) { u0 = u; v0 = v; break; }
         if (u0 < 0) { if ((int)chosen.size() == NM) emit(); return; }   // all edges covered -> a P1F
         if (!imgUncovered(u0, v0)) return;            // no alpha-orbit can cover this edge
 
         // 1. collect every candidate matching whose orbit covers the forced anchor edge.
         int nchosen = (int)chosen.size();
-        for (int k = 0; k < nchosen; k++) for (int x = 0; x < N; x++) path_end[k][x] = chosen[k][x];  // reset path_end
-        Match M; for (int i = 0; i < N; i++) M[i] = 0xFF;     // matching being built (0xFF = unset)
-        uint32_t usedM = (1u << u0) | (1u << v0);             // vertices already matched (anchor edge forced)
-        M[u0] = (uint8_t)v0; M[v0] = (uint8_t)u0;
-        for (int k = 0; k < nchosen; k++) { uint8_t eu = path_end[k][u0], ev = path_end[k][v0]; path_end[k][eu] = ev; path_end[k][ev] = eu; }
         std::vector<Match> cands;
-        collectRow(M, usedM, u0, v0, cands);
+        if (g_mrv && !g_typeMask) {
+            // [MRV] REP_MRV: lookahead + most-constrained anchor. Every uncovered edge must lie in some
+            // candidate matching (else no completion exists: dead node); the anchor is the edge with the
+            // FEWEST candidates (ties: the lowest edge). One edge per G-orbit of edges is enough: the
+            // covered set is G-invariant, so g maps the candidates of e onto those of g(e).
+            size_t best = SIZE_MAX; std::vector<Match> tmp;
+            for (int u = 0; u < N && best > 1; u++) for (int v = u + 1; v < N && best > 1; v++) {
+                if (covered[u][v]) continue;
+                bool rep = true;
+                for (const auto& g : sh->gElems) { int a = g[u], b = g[v]; int x = a < b ? a : b, y = a < b ? b : a; if (x < u || (x == u && y < v)) { rep = false; break; } }
+                if (!rep) continue;
+                tmp.clear(); collectCap = best; collectAt(u, v, tmp); collectCap = SIZE_MAX;   // stops at `best`: then not the anchor
+                if (tmp.empty()) { fanTally(nchosen, 0, 0); return; }
+                if (tmp.size() < best) { best = tmp.size(); u0 = u; v0 = v; cands.swap(tmp); }   // < best: complete, not capped
+            }
+        } else collectAt(u0, v0, cands);
         if (cands.empty()) { fanTally(nchosen, 0, 0); return; }
 
         // 2. collapse to one member per distinct alpha-orbit (genM may emit several
-        //    matchings that lie in the same orbit), keyed by the orbit serialization.
-        std::unordered_map<std::string, int> keyIdx;   // orbit key -> representative index
-        std::vector<std::string> keys;                 // keys[i] = orbit key of reps[i]
+        //    matchings that lie in the same orbit), keyed by the orbit's smallest member.
+        // [NODEMEM] Everything this step builds -- the candidates, the keys, the key map -- is FREED
+        //    before any child is searched: the children to visit and their stabilizers are decided
+        //    first (the same sequential G-orbit rule as before, so the same tree and node counts),
+        //    and only that list lives on through the recursion. Kept alive, those per-node tables
+        //    held millions of entries at the shallow levels of a K22 order-5 block, on every level of
+        //    the recursion at once, and the search outgrew the laptop's memory.
         std::vector<Match> reps;                        // one matching per distinct orbit
-        for (auto& C : cands) {
-            std::string k = orbitKey(C, sh->gElems);
-            if (keyIdx.emplace(k, (int)reps.size()).second) { keys.push_back(std::move(k)); reps.push_back(C); }
-        }
-
-        // 3a. no usable symmetry (G empty: over-cap/sparse types) -> explore every orbit;
-        //     the global canonical key removes any labeling duplicates downstream.
-        if (active.empty()) {
-            for (auto& R : reps) processM(R, active);
-            return;
-        }
-
-        // 3b. dedup candidate orbits by G and recurse each representative with Stab_G(O).
-        std::vector<char> marked(reps.size(), 0);       // marked[j] = orbit j is in an already-handled G-orbit
-        for (size_t i = 0; i < reps.size(); i++) {
-            if (marked[i]) continue;
-            std::vector<int> stab;                      // gammas in G fixing this orbit = Stab_G(O)
-            for (int gi : active) {
-                std::string img = orbitKey(applyAlpha(reps[i], sh->Calpha[gi].data()), sh->gElems);
-                if (img == keys[i]) { stab.push_back(gi); continue; }   // gamma fixes the orbit
-                auto it = keyIdx.find(img);             // gamma maps it onto another candidate -> same G-orbit
-                if (it != keyIdx.end()) marked[it->second] = 1;
+        std::vector<Match> keys;                        // keys[i] = orbitMinKey(reps[i])
+        {
+            std::unordered_map<Match, int, MatchHash> keyIdx; keyIdx.reserve(cands.size());
+            for (auto& C : cands) {
+                Match k = orbitMinKey(C, sh->gElems);
+                if (keyIdx.emplace(k, (int)reps.size()).second) { keys.push_back(k); reps.push_back(C); }
             }
-            processM(reps[i], stab);                     // commit orbit, recurse with the sub-stabilizer
+            std::vector<Match>().swap(cands);
+
+            // [PORT] REP_PRUNELEVEL: past this depth, skip the exact-stabilizer orbit dedup -- explore every
+            //     orbit with an empty stab so descendants stay exhaustive; global canonKey remains the dedup.
+            // 3a. no usable symmetry (G empty: over-cap/sparse types) -> explore every orbit;
+            //     the global canonical key removes any labeling duplicates downstream.
+            const bool noDedup = (g_pruneMaxFactors > 0 && nchosen >= g_pruneMaxFactors) || active.empty();
+            if (!noDedup) {
+                // 3b. dedup candidate orbits by G: decide every child and its Stab_G(O) now.
+                std::vector<char> marked(reps.size(), 0);   // marked[j] = orbit j is in an already-handled G-orbit
+                std::vector<Match> kidRep; std::vector<std::vector<int>> kidStab;
+                for (size_t i = 0; i < reps.size(); i++) {
+                    if (marked[i]) continue;
+                    std::vector<int> stab;                  // gammas in G fixing this orbit = Stab_G(O)
+                    for (int gi : active) {
+                        Match img = orbitMinKey(applyAlpha(reps[i], sh->Calpha[gi].data()), sh->gElems);
+                        if (img == keys[i]) { stab.push_back(gi); continue; }   // gamma fixes the orbit
+                        auto it = keyIdx.find(img);         // gamma maps it onto another candidate -> same G-orbit
+                        if (it != keyIdx.end()) marked[it->second] = 1;
+                    }
+                    kidRep.push_back(reps[i]); kidStab.push_back(std::move(stab));
+                }
+                std::unordered_map<Match, int, MatchHash>().swap(keyIdx);
+                std::vector<Match>().swap(keys); std::vector<Match>().swap(reps);
+                for (size_t k = 0; k < kidRep.size(); k++) processM(kidRep[k], kidStab[k]);   // commit orbit, recurse with the sub-stabilizer
+                return;
+            }
         }
+        std::vector<Match>().swap(keys);
+        const std::vector<int> none;
+        for (auto& R : reps) processM(R, (g_pruneMaxFactors > 0 && nchosen >= g_pruneMaxFactors) ? none : active);
     }
 
     // Cover step for OVER-CAP types, where C(alpha) is too large to enumerate (sh->Calpha
@@ -2139,42 +2148,50 @@ struct RepWorker {
     // under-approximating generator chain) is what makes the dense types -- order-2 2^9 in
     // particular -- terminate: the dedup is full strength at every depth. Sound for counting
     // (dedup is by a genuine subgroup; global canonKey is the final net).
-    // [DIAG] REP_F17DUMP: at a node with NM-1 committed factors, the uncovered edges are the FORCED
-    // last factor F17. Count it, and once per 60s print the obstruction -- which earlier factor(s) F17
-    // is non-Hamiltonian with, the cycle partition of F17 U F_k, the shortest clash cycle -- plus the
-    // running histogram of the partition shape (to reveal whether the obstruction is uniform/local).
+    // [DIAG] REP_F17DUMP: sample the FORCED COMPLETION obstruction, keyed by the a-stratum of F1.
+    // Because the search commits sigma0-ORBITS (blocks of 1 or 2 factors), the last committed block is
+    // either a single forced factor (rem=1 uncovered edge/vertex) or a forced sigma0-PAIR (rem=2, the
+    // uncovered graph is 2-regular). rem=1: report the tightest non-Hamiltonian clash of the forced
+    // factor vs an earlier one. rem=2: report the cycle partition of the 2-regular remainder R (a single
+    // {N} = one Hamiltonian cycle = 2-factorable/ideal; a split or odd cycle = the obstruction). Key
+    // "a{a}:1F:{...}" or "a{a}:2F:{...}"; "ham"/"14" means no obstruction at this step (fertile-so-far).
     void f17Sample() {
         long long tot = g_f17Total.fetch_add(1, std::memory_order_relaxed) + 1;
-        bool doHist = (tot % g_f17Sub) == 0;                    // subsample the histogram densely (read-only, tree-neutral)
+        bool doHist = (tot % g_f17Sub) == 0;
         double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_t0).count();
-        bool doPrint = false;                                   // detailed print is still throttled to once / 60s
+        bool doPrint = false;
         long long due = g_f17NextSec.load(std::memory_order_relaxed);
         if (el >= due) { long long nxt = ((long long)(el / 60.0) + 1) * 60; doPrint = g_f17NextSec.compare_exchange_strong(due, nxt, std::memory_order_relaxed); }
-        if (!doHist && !doPrint) return;                        // nothing to record or print at this node
-        Match f17; bool okF = true;                             // forced last factor = the uncovered edges (1 per vertex)
-        for (int u = 0; u < N; u++) { f17[u] = 0xFF; for (int v = 0; v < N; v++) if (v != u && !(coveredBits[u] & (1u << v))) { f17[u] = (uint8_t)v; break; } if (f17[u] == 0xFF) okF = false; }   // coveredBits is the SYMMETRIC map (covered[][] is upper-triangular only)
-        if (!okF) return;                                       // not a clean forced matching (should not happen at NM-1)
-        int bestK = -1, nclash = 0; std::vector<int> bestParts, bestShort;
-        for (int k = 0; k < (int)chosen.size(); k++) {          // find the tightest (shortest-cycle) non-Hamiltonian clash
-            std::vector<int> sc; std::vector<int> parts = unionCycleParts(f17, chosen[k], &sc);
-            if (parts.size() > 1) { nclash++; if (bestK < 0 || sc.size() < bestShort.size()) { bestK = k; bestParts = parts; bestShort = sc; } }
-        }
-        std::string pk;                                         // partition key, e.g. "9+9"
-        for (size_t i = 0; i < bestParts.size(); i++) pk += (i ? "+" : "") + std::to_string(bestParts[i]);
-        if (bestK < 0) pk = "NOCLASH";
+        if (!doHist && !doPrint) return;
+        int rem = NM - (int)chosen.size();                     // uncovered edges per vertex (uniform): 1 or 2 factors left
+        int mp = 0, ndiag = 0;                                 // a-stratum of F1 = (#alpha 2-cycles - #alpha-diagonal edges in F1)/2
+        for (int v = 0; v < N; v++) if (v < sh->alpha[v]) { mp++; if (!chosen.empty() && chosen[0][v] == sh->alpha[v]) ndiag++; }
+        int a = (mp - ndiag) / 2;
+        std::string pk = "a" + std::to_string(a) + ":";
+        if (rem == 1) {                                        // forced single last factor = the uncovered edges (coveredBits is the SYMMETRIC map)
+            Match flast; for (int u = 0; u < N; u++) { flast[u] = 0xFF; for (int v = 0; v < N; v++) if (v != u && !(coveredBits[u] & (1u << v))) { flast[u] = (uint8_t)v; break; } if (flast[u] == 0xFF) return; }
+            int bestK = -1; std::vector<int> bestParts, bestShort;
+            for (int k = 0; k < (int)chosen.size(); k++) { std::vector<int> sc; std::vector<int> parts = unionCycleParts(flast, chosen[k], &sc);
+                if (parts.size() > 1 && (bestK < 0 || sc.size() < bestShort.size())) { bestK = k; bestParts = parts; bestShort = sc; } }
+            pk += "1F:";
+            if (bestK < 0) pk += "ham";
+            else for (size_t i = 0; i < bestParts.size(); i++) pk += (i ? "+" : "") + std::to_string(bestParts[i]);
+        } else if (rem == 2) {                                 // forced last sigma0-pair: 2-regular remainder R -> its cycle partition
+            uint8_t adj[N][2]; int cnt[N] = { 0 };
+            for (int u = 0; u < N; u++) for (int v = 0; v < N; v++) if (v != u && !(coveredBits[u] & (1u << v))) { if (cnt[u] >= 2) return; adj[u][cnt[u]++] = (uint8_t)v; }
+            for (int u = 0; u < N; u++) if (cnt[u] != 2) return;
+            bool seen[N] = { false }; std::vector<int> parts; int guard = 0;
+            for (int s = 0; s < N; s++) { if (seen[s]) continue; int prev = -1, cur = s, len = 0;
+                do { seen[cur] = true; len++; int nx = (adj[cur][0] != prev) ? adj[cur][0] : adj[cur][1]; prev = cur; cur = nx; if (++guard > N + 2) return; } while (cur != s);
+                parts.push_back(len); }
+            std::sort(parts.begin(), parts.end(), std::greater<int>());
+            pk += "2F:"; for (size_t i = 0; i < parts.size(); i++) pk += (i ? "+" : "") + std::to_string(parts[i]);
+        } else return;
         std::lock_guard<std::mutex> lk(g_f17_mtx);
-        if (doHist) { g_f17Hist[pk]++; g_f17ClashHist[nclash]++; }
+        if (doHist) g_f17Hist[pk]++;
         if (!doPrint || !g_bprint) return;
-        auto edges = [](const Match& m) { std::string s; for (int u = 0; u < N; u++) { int v = m[u]; if (u < v) { char t[16]; snprintf(t, sizeof(t), "{%d,%d}", u, v); s += t; } } return s; };
-        std::string sc; for (size_t i = 0; i < bestShort.size(); i++) { char t[8]; snprintf(t, sizeof(t), "%s%d", i ? " " : "", bestShort[i]); sc += t; }
-        std::string hist; for (auto& kv : g_f17Hist) { char t[48]; snprintf(t, sizeof(t), "%s%s:%lld", hist.empty() ? "" : "  ", kv.first.c_str(), kv.second); hist += t; }
-        std::string ch; for (auto& kv : g_f17ClashHist) { char t[48]; snprintf(t, sizeof(t), "%s%d:%lld", ch.empty() ? "" : " ", kv.first, kv.second); ch += t; }
-        printf("[F17] t=%.0fs forced-17th nodes=%lld (sampled 1/%lld) | clashes=%d tightest=F#%d part=%s shortcyc(len%zu)=[%s]\n",
-               el, tot, g_f17Sub, nclash, bestK, pk.c_str(), bestShort.size(), sc.c_str());
-        printf("      F17 = %s\n", edges(f17).c_str());
-        if (bestK >= 0) printf("      F#%d = %s\n", bestK, edges(chosen[bestK]).c_str());
-        printf("      obstruction histogram (sampled): %s\n", hist.c_str());
-        printf("      clash-count histogram (sampled): %s\n", ch.c_str());
+        std::string hist; for (auto& kv : g_f17Hist) { char t[64]; snprintf(t, sizeof(t), "%s%s:%lld", hist.empty() ? "" : "  ", kv.first.c_str(), kv.second); hist += t; }
+        printf("[F17] t=%.0fs forced-completion nodes=%lld | histogram: %s\n", el, tot, hist.c_str());
         fflush(stdout);
     }
 
@@ -2182,44 +2199,15 @@ struct RepWorker {
         nodes++; nodes_flush++;
         progressTick(nodes_flush, g_nodes);
         if (g_stop.load(std::memory_order_relaxed)) return;   // harvest target reached -> unwind the search
-        { int cs = (int)chosen.size(); int pv = g_maxDepth.load(std::memory_order_relaxed);   // diagnostic: track deepest partial factorization
-          while (cs > pv && !g_maxDepth.compare_exchange_weak(pv, cs, std::memory_order_relaxed)) {} }
-        if (g_f17dump && (int)chosen.size() == NM - 1) f17Sample();   // [DIAG] REP_F17DUMP: forced-17th obstruction sampler
+        if (g_f17dump && (int)chosen.size() >= NM - 2) f17Sample();   // [DIAG] REP_F17DUMP: forced-completion obstruction sampler
         if (g_lvlStats) { int m = (int)chosen.size(); if (m < NM + 2) g_lvlReached[m].fetch_add(1, std::memory_order_relaxed); }   // [DIAG] REP_LEVELSTATS
-        if (g_probe1 > 0 && (int)chosen.size() == g_probe1) {   // [DIAG] REP_PROBE1: U == sigma0(R) ?
-            bool row[N] = { false }, one[N] = { false };        // row[x]: (0,x) committed;  one[v]: (1,v) committed
-            for (const Match& F : chosen) { row[F[0]] = true; one[F[1]] = true; }
-            bool bad = false;
-            for (int x = 1; x < N && !bad; x++) {               // R = { x : !row[x] } ; U = { v : !one[v] }
-                if (row[x]) continue;                           // x committed -> sigma0(x) must be matched to 1
-                if (one[sh->alpha[x]]) bad = true;              // required partner already used up
-            }
-            g_probeSeen.fetch_add(1, std::memory_order_relaxed);
-            if (bad) g_probeBad.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (g_diagProbe > 0 && (int)chosen.size() >= g_diagProbe
-            && (g_diagSeen.fetch_add(1, std::memory_order_relaxed) % g_diagSub) == 0) diagProbe();   // [DIAG] REP_DIAGPROBE: unrealizable-diagonal look-ahead (measure only)
+        if (g_patStat && (int)chosen.size() == NM - 1) { std::string p = patSeq(); std::lock_guard<std::mutex> lk(g_pat_mtx); g_patF17[p]++; }   // [PORT] REP_PATSTAT: forced-last-factor pattern tally
         if (g_diagPruneLo > 0 && diagPruned()) return;   // [FILTER] REP_DIAGPRUNE: an uncovered diagonal has no legal S row -> this node cannot complete
-        if (g_patStat) { int m = (int)chosen.size();   // [DIAG] REP_PATSTAT: forced-17th (near-complete) + optional mid-level pattern tally
-            if (m == NM - 1) { std::string p = patSeq(); std::lock_guard<std::mutex> lk(g_pat_mtx); g_patF17[p]++; }
-            else if (g_patLevel > 0 && m == g_patLevel && (g_patMidSeen.fetch_add(1, std::memory_order_relaxed) % g_patSub) == 0) { std::string p = patSeq(); std::lock_guard<std::mutex> lk(g_pat_mtx); g_patMid[p]++; } }
-        if (g_swapCap) { int w = 0; for (const auto& F : chosen) if (applyAlpha(F, sh->alpha) != F) w++; if (w > 8) return; }   // [FILTER] REP_SWAPCAP: >4 sigma0-swap-pairs cannot complete to a=4 (dichotomy) -> prune (a=4 blocks only)
         if (g_patApply && !patOK()) return;   // [PATFILTER] neighbour-0 reject (set target or calculated)
         if (g_patPair && !patPairOK()) return;   // [PATFILTER] REP_PATPAIR one-per-pair reject (complete |Aut|=2 filter, no fixed pattern)
-        if (g_ovlLevel > 0 && (int)chosen.size() >= g_ovlLevel) {   // [DIAG] REP_CANONOVL: cap here too (inline coverGen fallback path)
-            if (!partialAllSym(chosen)) g_ovlNonSym.fetch_add(1, std::memory_order_relaxed);
-            // [FIX] canonKey() indexes f[0..NM-1] unconditionally, so calling it on a PARTIAL (size
-            // < NM) reads past the end of the vector -- REP_CANONKEY segfaulted here. canonV_fast is
-            // the partial-safe canonizer: it is what block canonization already uses on the 5-factor
-            // starters, and it yields the same order-independent key.
-            int sz = (int)chosen.size(); std::string ck;
-            if (g_ovlKey) { uint8_t k4[NEDGES]; canonV_fast(chosen, sh->alpha, k4); ck.assign((const char*)k4, NEDGES); }
-            { std::lock_guard<std::mutex> lk(g_ovlMtx); g_ovlTot[sz]++; if (g_ovlKey) g_ovlSet[sz].insert(std::move(ck)); }
-            return;
-        }
 
-        int u0, v0;                   // cover anchor (filtered rows first, then lowest uncovered)
-        pickAnchor(u0, v0);
+        int u0 = -1, v0 = -1;         // lowest uncovered edge (the cover anchor)
+        for (int u = 0; u < N && u0 < 0; u++) for (int v = u + 1; v < N; v++) if (!covered[u][v]) { u0 = u; v0 = v; break; }
         if (u0 < 0) { if ((int)chosen.size() == NM) emit(); return; }
         if (!imgUncovered(u0, v0)) return;
 
@@ -2251,9 +2239,7 @@ struct RepWorker {
         //     Skip it and explore every orbit -- identical to what the Gp.empty() branch does,
         //     and the global canonKey is still the final dedup. Node-count- and class-neutral.
         if (parentTrivial) { for (auto& R : reps) processMGen(R, true); return; }
-        // REP_PRUNELEVEL: past this factor-depth, force-skip the setwiseStab prune (explore all orbits,
-        // mark the subtree trivial so descendants skip too); global canonKey remains the exact dedup.
-        if (g_pruneMaxFactors > 0 && nchosen >= g_pruneMaxFactors) { for (auto& R : reps) processMGen(R, true); return; }
+        if (g_pruneMaxFactors > 0 && nchosen >= g_pruneMaxFactors) { for (auto& R : reps) processMGen(R, true); return; }   // [PORT] REP_PRUNELEVEL: skip setwiseStab past depth, explore all orbits (global canonKey dedups)
 
         std::vector<Perm> Gp = cgt::setwiseStab<N>(sh->rootBSGS, chosen, covered);
 
@@ -2276,26 +2262,6 @@ struct RepWorker {
         if (!buildAndValidateOrbit(M, orbit)) return;
         size_t base = chosen.size();
         commitOrbit(orbit);
-        // [PERF] HOIST: processMGen runs per node, and getenv() on Windows walks and upcases the whole
-        // environment block every call. Profiling the t9 a=0 census showed ~4.3% of samples
-        // in RtlCreateUnicodeString / RtlUpcaseUnicodeString / RtlQueryFeatureConfiguration from this one
-        // line. Read it once.
-        static const bool vtest = std::getenv("REP_VTEST") != nullptr;
-        if (vtest && !chosen.empty()) {   // canonV_fast must be INVARIANT under C(sigma0) gens
-            static std::atomic<int> vb{ 40 };
-            if (vb.fetch_sub(1) > 0) {
-                uint8_t base[NEDGES]; canonV_fast(chosen, sh->alpha, base);
-                bool ok = true; int ng = 0;
-                for (const auto& g : sh->rootCgens) {
-                    std::vector<Match> img(chosen.size());
-                    for (size_t i = 0; i < chosen.size(); i++) img[i] = applyAlpha(chosen[i], g.data());
-                    uint8_t v[NEDGES]; canonV_fast(img, sh->alpha, v);
-                    ng++; if (memcmp(v, base, NEDGES) != 0) { ok = false; break; }
-                }
-                static std::atomic<int> vn{ 0 }, vf{ 0 }; int c = ++vn; if (!ok) ++vf;
-                fprintf(stderr, "[vtest-k18] partial #%d (%d fac, %d gens): %s [%d checks, %d FAIL]\n", c, (int)chosen.size(), ng, ok ? "PASS" : "FAIL", (int)vn, (int)vf); fflush(stderr);
-            }
-        }
         coverGen(childTrivial);
         rollbackTo(base);
     }
@@ -2309,30 +2275,13 @@ struct RepWorker {
         nodes++; nodes_flush++;
         progressTick(nodes_flush, g_nodes);
         if (g_stop.load(std::memory_order_relaxed)) return;   // harvest target reached -> unwind the search
-        if (g_f17dump && (int)chosen.size() == NM - 1) f17Sample();   // [DIAG] REP_F17DUMP: forced-17th sampler (BFS/work-queue path)
         if (g_lvlStats) { int m = (int)chosen.size(); if (m < NM + 2) g_lvlReached[m].fetch_add(1, std::memory_order_relaxed); }   // [DIAG] REP_LEVELSTATS
-        if (g_probe1 > 0 && (int)chosen.size() == g_probe1) {   // [DIAG] REP_PROBE1: U == sigma0(R) ?
-            bool row[N] = { false }, one[N] = { false };        // row[x]: (0,x) committed;  one[v]: (1,v) committed
-            for (const Match& F : chosen) { row[F[0]] = true; one[F[1]] = true; }
-            bool bad = false;
-            for (int x = 1; x < N && !bad; x++) {               // R = { x : !row[x] } ; U = { v : !one[v] }
-                if (row[x]) continue;                           // x committed -> sigma0(x) must be matched to 1
-                if (one[sh->alpha[x]]) bad = true;              // required partner already used up
-            }
-            g_probeSeen.fetch_add(1, std::memory_order_relaxed);
-            if (bad) g_probeBad.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (g_diagProbe > 0 && (int)chosen.size() >= g_diagProbe
-            && (g_diagSeen.fetch_add(1, std::memory_order_relaxed) % g_diagSub) == 0) diagProbe();   // [DIAG] REP_DIAGPROBE (work-queue path -- where F3COMPLETE actually spends its nodes)
-        if (g_diagPruneLo > 0 && diagPruned()) return;   // [FILTER] REP_DIAGPRUNE (work-queue path)
-        if (g_patStat) { int m = (int)chosen.size();   // [DIAG] REP_PATSTAT: forced-17th (near-complete) + optional mid-level pattern tally
-            if (m == NM - 1) { std::string p = patSeq(); std::lock_guard<std::mutex> lk(g_pat_mtx); g_patF17[p]++; }
-            else if (g_patLevel > 0 && m == g_patLevel && (g_patMidSeen.fetch_add(1, std::memory_order_relaxed) % g_patSub) == 0) { std::string p = patSeq(); std::lock_guard<std::mutex> lk(g_pat_mtx); g_patMid[p]++; } }
-        if (g_swapCap) { int w = 0; for (const auto& F : chosen) if (applyAlpha(F, sh->alpha) != F) w++; if (w > 8) return; }   // [FILTER] REP_SWAPCAP: >4 sigma0-swap-pairs cannot complete to a=4 (dichotomy) -> prune (a=4 blocks only)
+        if (g_patStat && (int)chosen.size() == NM - 1) { std::string p = patSeq(); std::lock_guard<std::mutex> lk(g_pat_mtx); g_patF17[p]++; }   // [PORT] REP_PATSTAT: forced-last-factor pattern tally
+        if (g_diagPruneLo > 0 && diagPruned()) return;   // [FILTER] REP_DIAGPRUNE: an uncovered diagonal has no legal S row -> this node cannot complete
         if (g_patApply && !patOK()) return;   // [PATFILTER] neighbour-0 reject (set target or calculated)
         if (g_patPair && !patPairOK()) return;   // [PATFILTER] REP_PATPAIR one-per-pair reject (complete |Aut|=2 filter, no fixed pattern)
-        int u0, v0;                   // cover anchor (filtered rows first, then lowest uncovered)
-        pickAnchor(u0, v0);
+        int u0 = -1, v0 = -1;
+        for (int u = 0; u < N && u0 < 0; u++) for (int v = u + 1; v < N; v++) if (!covered[u][v]) { u0 = u; v0 = v; break; }
         if (u0 < 0) { if ((int)chosen.size() == NM) emit(); return; }     // leaf -> emit, no children
         if (!imgUncovered(u0, v0)) return;                                // dead end
         int nchosen = (int)chosen.size();
@@ -2341,17 +2290,15 @@ struct RepWorker {
         uint32_t usedM = (1u << u0) | (1u << v0);
         M[u0] = (uint8_t)v0; M[v0] = (uint8_t)u0;
         for (int k = 0; k < nchosen; k++) { uint8_t eu = path_end[k][u0], ev = path_end[k][v0]; path_end[k][eu] = ev; path_end[k][ev] = eu; }
-        std::vector<Match>& cands = snCands; cands.clear();                 // reused buffers -> no per-node heap churn
+        std::vector<Match> cands;
         collectRow(M, usedM, u0, v0, cands);
         if (cands.empty()) { fanTally(nchosen, 0, 0); return; }
-        std::unordered_map<std::string, int>& keyIdx = snKeyIdx; keyIdx.clear();
-        std::vector<std::string>& keys = snKeys; keys.clear();
-        std::vector<Match>& reps = snReps; reps.clear();
+        std::unordered_map<std::string, int> keyIdx; std::vector<std::string> keys; std::vector<Match> reps;
         for (auto& C : cands) { std::string k = orbitKey(C, sh->gElems); if (keyIdx.emplace(k, (int)reps.size()).second) { keys.push_back(std::move(k)); reps.push_back(C); } }
         fanTally(nchosen, cands.size(), reps.size());
-        std::vector<int>& repIdx = snRepIdx; repIdx.clear();
+        std::vector<int> repIdx;
         bool childTrivial;
-        if (parentTrivial || (g_pruneMaxFactors > 0 && nchosen >= g_pruneMaxFactors)) {   // trivial up-path OR REP_PRUNELEVEL past depth -> skip setwiseStab, explore all, stay trivial
+        if (parentTrivial || (g_pruneMaxFactors > 0 && nchosen >= g_pruneMaxFactors)) {   // [PORT] trivial up-path OR REP_PRUNELEVEL -> skip setwiseStab, explore all, stay trivial
             for (size_t i = 0; i < reps.size(); i++) repIdx.push_back((int)i); childTrivial = true;
         } else {
             std::vector<Perm> Gp = cgt::setwiseStab<N>(sh->rootBSGS, chosen, covered);
@@ -2367,11 +2314,14 @@ struct RepWorker {
         }
     }
 
-    // [PATHCOORDCANON helper] Build the raw orbitKey-deduped child reps at the current anchor (same
-    // list/order splitNode & PATHCOORD use -> PL-invariant), AND expose the C(sigma0) node-stabilizer
-    // generators hgens (edge-stab of the setwise stabilizer of the committed cover). The caller can
-    // then minimize the child index over the hgens-orbit = the canonized (min-over-C(sigma0)) a.b.c
-    // component. Commits nothing. Returns false on leaf/dead-end.
+
+    // [BLOCK] Enumerate the next level's factor-orbits below the committed prefix, deduped by
+    // orbitKey, and return the residual symmetry (the edge stabilizer at the anchor).  Copied
+    // VERBATIM from k18a2rep.cpp so the K14 block count exercises the same code as the K18
+    // census.
+    // K14 is used instead of K16 because 14 = 2 (mod 4) admits a fixed-point-free involution,
+    // so K14 has BOTH the t8 shape (2^6 1^2) and the t9 shape (2^7); at K16 and K20 the
+    // fixed-point-free type is empty by the order-2 parity theorem, so only t8 could be tested.
     bool childReps(std::vector<Match>& reps, std::vector<std::string>& keys,
                    std::unordered_map<std::string, int>& keyIdx, std::vector<Perm>& hgens,
                    int& u0, int& v0) {
@@ -2400,7 +2350,7 @@ struct RepWorker {
     // uncovered edge the rows through it (genM under the closure ban, images free), grouped by
     // orbit key, each orbit stored once with its sorted members and its edge bitmap.
     std::shared_ptr<OrbList> buildOrbList() {
-        if (sh->gElems.size() > 2 || sh->nV4 > 0) { fprintf(stderr, "REP_PRECALC: prototype supports orbits of size <= 3 and no V4 filters\n"); exit(3); }
+        if (sh->gElems.size() > 2) { fprintf(stderr, "REP_PRECALC: prototype supports orbits of size <= 3\n"); exit(3); }   // (k14 has no V4 shard filters, so no nV4 check here)
         auto L = std::make_shared<OrbList>();
         std::unordered_set<std::string> seen;
         const int nchosen = (int)chosen.size();
@@ -2419,7 +2369,7 @@ struct RepWorker {
                 if (!buildAndValidateOrbit(C, orbit)) continue;      // sorted, deduped members: [0] is the least
                 OrbEnt e; e.nrows = (uint8_t)orbit.size();
                 for (int r = 0; r < e.nrows; r++) e.rows[r] = orbit[r];
-                OrbBits b; b.w[0] = b.w[1] = b.w[2] = b.w[3] = 0;
+                OrbBits b; for (int q = 0; q < OBW; q++) b.w[q] = 0;
                 for (int r = 0; r < e.nrows; r++) for (int u = 0; u < N; u++) { int v = e.rows[r][u]; if (u < v) { int id = eidT[u][v]; b.w[id >> 6] |= 1ull << (id & 63); } }
                 L->ent.push_back(e); L->bits.push_back(b);          // index-parallel, always pushed together
             }
@@ -2429,15 +2379,11 @@ struct RepWorker {
 
     // [PRECALC] one level of the cover from a list: candidates = admissible entries through the
     // anchor edge; each child = chosen + the entry's rows, with the parent's list filtered by it.
-    // [TYPEMASK] The genM hook at u==1, restated as a predicate on a finished entry so the list
-    // walk can apply it too. genM masks vertex 1's partner while the matching is being built; here
-    // the matching already exists, so the same rule becomes a test on its base row.
-    // It CANNOT be baked into the list at build time: patRowType() reads `chosen`, so the verdict
-    // changes as factors are committed. The list is built once at the block prefix and already
-    // carries the mask AS OF THAT PREFIX -- entries that go bad deeper were never re-checked, and
-    // that is what this restores.
-    // The companion u>=2 rule (a W factor may hold no diagonal) needs no restating: it depends on
-    // the entry alone, so genM already enforced it when the list was built.
+    // [TYPEMASK] (ported from k18a2rep.cpp with the PRECALC block path) The genM hook at u==1, restated
+    // as a predicate on a finished entry so the list walk can apply it too. It CANNOT be baked into the
+    // list at build time: patRowType() reads `chosen`, so the verdict changes as factors are committed.
+    // The companion u>=2 rule (a W factor may hold no diagonal) depends on the entry alone, so genM
+    // already enforced it when the list was built.
     bool typeMaskOK(const OrbEnt& ce) const {
         const Match& F = ce.rows[0];                 // the base row -- the factor genM would have built
         const int kpos = F[0];
@@ -2450,15 +2396,11 @@ struct RepWorker {
         return true;
     }
 
-    void splitNodeL(const OrbTask& t, std::vector<std::vector<Match>>& outChildren, std::vector<char>& outTrivial, std::vector<OrbTask>& outTrip) {
+    void splitNodeL(const OrbTask& t,std::vector<std::vector<Match>>& outChildren, std::vector<char>& outTrivial, std::vector<OrbTask>& outTrip) {
         nodes++; nodes_flush++;
         progressTick(nodes_flush, g_nodes);
         if (g_stop.load(std::memory_order_relaxed)) return;
-        // [FILTER] REP_DIAGPRUNE, as coverGen and splitNode apply it. The test is a property of
-        // the partial cover -- an uncovered diagonal with no legal S row means this node cannot
-        // complete -- so it does not care how the children were produced, and the list path was
-        // simply missing the call rather than being unable to make it.
-        if (g_diagPruneLo > 0 && diagPruned()) return;
+        if (g_diagPruneLo > 0 && diagPruned()) return;   // [FILTER] REP_DIAGPRUNE, as coverGen and splitNode apply it
         int u0, v0; pickAnchor(u0, v0);
         if (u0 < 0) { if ((int)chosen.size() == NM) emit(); return; }
         if (!imgUncovered(u0, v0)) return;
@@ -2572,15 +2514,98 @@ struct RepWorker {
         fanTally((int)chosen.size(), ncand, ncand);
     }
 
-    void collectTasks(std::vector<Match>& tasks) {
+    // [ROOTPRUNE] Can the partial matching M (0xFF = unmatched) still end in a valid first orbit?
+    // For every non-identity g: either g M == M stays possible (every image of an M-edge is in M or
+    // lands on two free vertices), or g M is a DISTINCT factor -- then it may share no edge with M and
+    // M u gM may close no cycle shorter than N (a closed cycle of the partial union is already a
+    // component of the final one). Rejects only matchings buildAndValidateOrbit would reject.
+    bool rootPartialOK(const Match& M) const {
+        for (const auto& g : sh->gElems) {
+            bool shared = false, fixedPossible = true;
+            uint8_t m2[N]; for (int x = 0; x < N; x++) m2[x] = 0xFF;   // the image edges g(M-edge)
+            for (int u = 0; u < N; u++) {
+                const int w = M[u]; if (w == 0xFF || w < u) continue;
+                const int a = g[u], b = g[w];
+                if (M[a] == b) shared = true; else if (M[a] != 0xFF || M[b] != 0xFF) fixedPossible = false;
+                m2[a] = (uint8_t)b; m2[b] = (uint8_t)a;
+            }
+            if (fixedPossible) continue;
+            if (shared) return false;
+            bool vis[N] = { false };
+            for (int x = 0; x < N; x++) {
+                if (vis[x] || M[x] == 0xFF || m2[x] == 0xFF) continue;
+                int len = 0, y = x;
+                for (;;) {                       // alternate M-edge, image-edge from x
+                    vis[y] = true; const int z = M[y]; if (z == 0xFF) break;
+                    vis[z] = true; len += 2; const int t = m2[z]; if (t == 0xFF) break;
+                    if (t == x) { if (len < N) return false; break; }
+                    if (vis[t]) break;
+                    y = t;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Root enumeration for collectTasks: same matchings, same order as genM on the empty board
+    // (lowest free vertex, partners ascending -- the order every downstream index and block number
+    // depends on), but pruned by rootPartialOK. genM's root walk visits all (N-3)!! matchings through
+    // {0,1} before validating any: 34M at K20 (26 s), 654M at K22 (~10 min), 1.4e10 at K24.
+    void genRoot(Match& M, uint32_t usedMask) {
+        const uint32_t freeMask = ~usedMask & FULLMASK;
+        if (g_rootCap > 0 && g_rootCount.load(std::memory_order_relaxed) >= g_rootCap) return;   // [ROOTCAP] enough collected
+        if (!freeMask) {
+            if (buildAndValidateOrbit(M, orbScratch)) {
+                const long long c = g_rootCount.fetch_add(1, std::memory_order_relaxed);
+                if (!g_rootCountOnly && (g_rootCap <= 0 || c < g_rootCap)) { if (collectChunks) collectChunks->push_back(M); else collectInto->push_back(M); }
+            }
+            return;
+        }
+        unsigned long u; _BitScanForward(&u, freeMask);
+        uint32_t cand = freeMask & (FULLMASK << (u + 1));
+        while (cand) {
+            unsigned long v; _BitScanForward(&v, cand); cand &= cand - 1;
+            M[u] = (uint8_t)v; M[v] = (uint8_t)u;
+            if (rootPartialOK(M)) genRoot(M, usedMask | (1u << u) | (1u << v));
+            M[u] = 0xFF; M[v] = 0xFF;
+        }
+    }
+
+    void collectTasks(ChunkList& tasks) {
         clearState();
         // anchor edge is (0,1) on the empty board
         Match M; for (int i = 0; i < N; i++) M[i] = 0xFF;
         uint32_t usedM = (1u << 0) | (1u << 1);
         M[0] = 1; M[1] = 0;
-        collectInto = &tasks;
-        genM(M, usedM, 1);
-        collectInto = nullptr;
+        if (std::getenv("REP_NOROOTPRUNE")) {   // A/B: the unpruned root walk
+            std::vector<Match> v; collectInto = &v; genM(M, usedM, 1); collectInto = nullptr;
+            for (const auto& m : v) tasks.push_back(m);
+            return;
+        }
+        // [ROOTTHREADS] The walk is split by the partner v of vertex 2 (the lowest free vertex after
+        // the anchor {0,1}) across g_rootThreads workers, each into its own list; the lists are then
+        // concatenated in v order, which is exactly genRoot's own order -- same tasks, same order.
+        const int u = 2;
+        std::vector<ChunkList> part(N);
+        std::atomic<int> nextV{ u + 1 };
+        auto work = [&]() {
+            RepWorker w; w.sh = sh; w.clearState();
+            for (;;) {
+                const int v = nextV.fetch_add(1);
+                if (v >= N) break;
+                Match m = M; m[u] = (uint8_t)v; m[v] = (uint8_t)u;
+                if (!w.rootPartialOK(m)) continue;
+                w.collectChunks = &part[v]; w.genRoot(m, usedM | (1u << u) | (1u << v)); w.collectChunks = nullptr;
+            }
+        };
+        const int nt = g_rootThreads < 1 ? 1 : (g_rootThreads > N - 3 ? N - 3 : g_rootThreads);
+        std::vector<std::thread> pool;
+        for (int t = 0; t < nt; t++) pool.emplace_back(work);
+        for (auto& th : pool) th.join();
+        for (int v = u + 1; v < N; v++) {   // join in v order, freeing each part: peak ~ the list + one part
+            for (size_t i = 0; i < part[v].size(); i++) tasks.pushCode(part[v].code(i));
+            part[v] = ChunkList();
+        }
     }
 
     // run one task: commit its first-orbit, then exact-cover the rest. Dispatch on whether
@@ -2729,6 +2754,7 @@ struct GrpShape {
     std::vector<Perm> gElems;     // ALL non-identity elements of the group
     std::vector<BlockCls> cls;    // centralizer block structure
     const char* skipWhy = nullptr;  // non-null: empty by this theorem (skip unless REP_NOSKIP)
+    int gOrder = 0;               // [GENGRP] |G| (generic legs; E9/S3 leave it 0)
 };
 
 // BFS closure of a generating set; fills `out` with all NON-identity elements.
@@ -2927,11 +2953,153 @@ void enumShapesS3(std::vector<GrpShape>& out) {
             }
 }
 
+// ---- [GENGRP] generic small-group legs: D8, Q8, C4xC2, C2xC2xC2, A4, D10 (GAP names) ---
+// The group G is given by generators on m <= 8 points (only to build its multiplication). An
+// embedding G -> S_N is, up to conjugacy in S_N, a multiset of transitive constituents G/H (H up to
+// conjugacy in G); on G/H, x acts by gH -> xgH. The centralizer permutes same-class constituents
+// and acts inside each by right multiplication gH -> gnH with n in N_G(H) (N_G(H)/H intertwiners):
+// exactly the BlockCls structure of the E9/S3 legs, so the rest of the leg is theirs. Multisets
+// related by an automorphism of G give the same subgroup of S_N and are emitted once (the
+// lexicographically least under Aut(G)).
+// Per element g != 1, with its cycle type on the N points (all elements are checked, so every power
+// of every element is):
+//   * g fixes > 2 vertices: empty by the fixed-point lemma (docs/K22_spec.md 3.1). Such multisets are
+//     NOT emitted (there would be thousands), so REP_NOSKIP cannot bring them back;
+//   * an involution without fixed points when N == 0 mod 4: empty by the order-2 parity theorem;
+//   * odd prime order p with an odd number of p-cycles when (N-1) % p != 0: odd-prime parity theorem.
+// The last two are emitted with skipWhy, like the E9/S3 shapes.
+struct GenGroupDef { const char* name; int order; int m; std::vector<std::vector<int>> gens; };
+static const GenGroupDef* genGroupDef(int code) {
+    static const GenGroupDef defs[] = {
+        { "D8",    8, 4, { { 1, 2, 3, 0 }, { 0, 3, 2, 1 } } },                                   // (0123), (13)
+        { "Q8",    8, 8, { { 1, 4, 3, 6, 5, 0, 7, 2 }, { 2, 7, 4, 1, 6, 3, 0, 5 } } },          // left mult by i, j on {1,i,j,k,-1,-i,-j,-k}
+        { "C4xC2", 8, 6, { { 1, 2, 3, 0, 4, 5 }, { 0, 1, 2, 3, 5, 4 } } },                       // (0123), (45)
+        { "C2xC2xC2", 8, 6, { { 1, 0, 2, 3, 4, 5 }, { 0, 1, 3, 2, 4, 5 }, { 0, 1, 2, 3, 5, 4 } } }, // (01), (23), (45)
+        { "A4",   12, 4, { { 1, 2, 0, 3 }, { 1, 0, 3, 2 } } },                                   // (012), (01)(23)
+        { "D10",  10, 5, { { 1, 2, 3, 4, 0 }, { 0, 4, 3, 2, 1 } } },                             // (01234), (14)(23)
+    };
+    const int i = kOrderGenBase - code;
+    return (i >= 0 && i < (int)(sizeof(defs) / sizeof(defs[0]))) ? &defs[i] : nullptr;
+}
+void enumShapesGen(int code, std::vector<GrpShape>& out, std::string& err) {
+    out.clear(); err.clear();
+    const GenGroupDef* D = genGroupDef(code);
+    if (!D) { err = "unknown group"; return; }
+    // 1. elements as permutations of the m points; multiplication table mul[a][b] = a*b (b first)
+    typedef std::vector<int> P;
+    const int m = D->m;
+    auto comp = [&](const P& a, const P& b) { P c(m); for (int i = 0; i < m; i++) c[i] = a[b[i]]; return c; };
+    std::vector<P> el; std::map<P, int> idx;
+    { P id(m); for (int i = 0; i < m; i++) id[i] = i; el.push_back(id); idx[id] = 0; }
+    for (size_t h = 0; h < el.size(); h++)
+        for (const auto& g : D->gens) { P x = comp(g, el[h]); if (!idx.count(x)) { idx[x] = (int)el.size(); el.push_back(x); } }
+    const int G = (int)el.size();
+    if (G != D->order) { err = "closure size " + std::to_string(G) + " != " + std::to_string(D->order); return; }
+    std::vector<std::vector<int>> mul(G, std::vector<int>(G));
+    std::vector<int> inv(G);
+    for (int a = 0; a < G; a++) for (int b = 0; b < G; b++) { mul[a][b] = idx[comp(el[a], el[b])]; if (mul[a][b] == 0) inv[a] = b; }
+    std::vector<int> ord(G, 1);
+    for (int a = 1; a < G; a++) { int x = a; while (x != 0) { x = mul[a][x]; ord[a]++; } }
+    if (!strcmp(D->name, "Q8")) { int ninv = 0; for (int a = 1; a < G; a++) if (ord[a] == 2) ninv++; if (ninv != 1) { err = "Q8 generators wrong"; return; } }
+    // 2. all subgroups (closures of up to 3 elements suffice for these groups), as element bitmasks
+    auto closeSet = [&](uint32_t s) { bool grew = true; while (grew) { grew = false; for (int a = 0; a < G; a++) if (s >> a & 1) for (int b = 0; b < G; b++) if (s >> b & 1) { int c = mul[a][b]; if (!(s >> c & 1)) { s |= 1u << c; grew = true; } } } return s; };
+    std::set<uint32_t> subs;
+    for (int a = 0; a < G; a++) for (int b = a; b < G; b++) for (int c = b; c < G; c++) subs.insert(closeSet(1u | 1u << a | 1u << b | 1u << c));
+    auto conjSet = [&](uint32_t s, int g) { uint32_t r = 0; for (int a = 0; a < G; a++) if (s >> a & 1) r |= 1u << mul[mul[g][a]][inv[g]]; return r; };
+    std::vector<uint32_t> clsRep;            // one subgroup per conjugacy class
+    { std::set<uint32_t> seen;
+      for (uint32_t s : subs) { if (seen.count(s)) continue; clsRep.push_back(s); for (int g = 0; g < G; g++) seen.insert(conjSet(s, g)); } }
+    std::sort(clsRep.begin(), clsRep.end(), [&](uint32_t x, uint32_t y) { int px = __popcnt(x), py = __popcnt(y); return px != py ? px < py : x < y; });   // regular first
+    const int C = (int)clsRep.size();
+    // 3. per class: cosets gH, the action of each element, its fixed-point count, N(H)/H intertwiners
+    struct Con { int size; std::vector<std::vector<int>> act; std::vector<int> fix; std::vector<std::vector<uint8_t>> tr; char tag[8]; };
+    std::vector<Con> con(C);
+    for (int c = 0; c < C; c++) {
+        const uint32_t H = clsRep[c];
+        std::vector<uint32_t> cos; std::vector<int> cosOf(G, -1);
+        for (int g = 0; g < G; g++) if (cosOf[g] < 0) { uint32_t s = 0; for (int h = 0; h < G; h++) if (H >> h & 1) s |= 1u << mul[g][h]; for (int x = 0; x < G; x++) if (s >> x & 1) cosOf[x] = (int)cos.size(); cos.push_back(s); }
+        Con& K = con[c]; K.size = (int)cos.size();
+        std::vector<int> rep(K.size); for (int i = 0; i < K.size; i++) { unsigned long b; _BitScanForward(&b, cos[i]); rep[i] = (int)b; }
+        K.act.assign(G, std::vector<int>(K.size)); K.fix.assign(G, 0);
+        for (int x = 0; x < G; x++) for (int i = 0; i < K.size; i++) { K.act[x][i] = cosOf[mul[x][rep[i]]]; if (K.act[x][i] == i) K.fix[x]++; }
+        std::set<std::vector<uint8_t>> trs;
+        for (int n = 0; n < G; n++) if (conjSet(H, n) == H) { std::vector<uint8_t> t(K.size); for (int i = 0; i < K.size; i++) t[i] = (uint8_t)cosOf[mul[rep[i]][n]]; trs.insert(t); }
+        { std::vector<uint8_t> id(K.size); for (int i = 0; i < K.size; i++) id[i] = (uint8_t)i; K.tr.push_back(id); for (auto& t : trs) if (t != id) K.tr.push_back(t); }
+        int same = 0; for (int d = 0; d < c; d++) if (__popcnt(clsRep[d]) == __popcnt(H)) same++;
+        snprintf(K.tag, sizeof(K.tag), "%d%c", (int)__popcnt(H), 'a' + same);
+    }
+    // 4. Aut(G) as permutations of the classes (for the canonical multiset)
+    std::vector<int> gIdx; for (const auto& g : D->gens) gIdx.push_back(idx[g]);
+    std::vector<std::vector<int>> autCls;
+    { std::vector<int> img(gIdx.size(), 0);
+      std::function<void(size_t)> rec = [&](size_t k) {
+          if (k < gIdx.size()) { for (int a = 1; a < G; a++) { img[k] = a; rec(k + 1); } return; }
+          std::vector<int> phi(G, -1); phi[0] = 0; std::vector<int> q(1, 0); bool ok = true;
+          for (size_t h = 0; h < q.size() && ok; h++)
+              for (size_t j = 0; j < gIdx.size() && ok; j++) {
+                  const int x = mul[gIdx[j]][q[h]], y = mul[img[j]][phi[q[h]]];
+                  if (phi[x] < 0) { phi[x] = y; q.push_back(x); } else if (phi[x] != y) ok = false;
+              }
+          if (!ok || (int)q.size() != G) return;
+          std::vector<char> hit(G, 0); for (int a = 0; a < G; a++) { if (hit[phi[a]]) return; hit[phi[a]] = 1; }
+          std::vector<int> pc(C);
+          for (int c = 0; c < C; c++) { uint32_t s = 0; for (int a = 0; a < G; a++) if (clsRep[c] >> a & 1) s |= 1u << phi[a];
+              for (int d = 0; d < C; d++) { bool hitD = false; for (int g = 0; g < G && !hitD; g++) if (conjSet(clsRep[d], g) == s) hitD = true; if (hitD) { pc[c] = d; break; } } }
+          autCls.push_back(pc);
+      };
+      rec(0); }
+    // 5. multisets sum(mult[c] * size[c]) = N with every element fixing <= 2 vertices
+    std::vector<int> mult(C, 0), fixAcc(G, 0);
+    std::function<void(int, int)> rec = [&](int c, int left) {
+        if (c == C) {
+            if (left) return;
+            for (const auto& pc : autCls) {          // keep the least multiset of its Aut(G) orbit
+                std::vector<int> im(C, 0); for (int d = 0; d < C; d++) im[pc[d]] += mult[d];
+                if (im < mult) return;
+            }
+            for (int x = 1; x < G; x++) if (fixAcc[x] == N) return;   // not faithful (cannot pass the lemma anyway)
+            GrpShape gs; gs.gOrder = G;
+            std::vector<Perm> gp(G);
+            for (int x = 0; x < G; x++) for (int i = 0; i < N; i++) gp[x][i] = (uint8_t)i;
+            int base = 0;
+            for (int d = 0; d < C; d++) {
+                if (!mult[d]) continue;
+                BlockCls bc; bc.bs = con[d].size; bc.tr = con[d].tr;
+                for (int q = 0; q < mult[d]; q++, base += con[d].size) {
+                    bc.starts.push_back(base);
+                    for (int x = 0; x < G; x++) for (int i = 0; i < con[d].size; i++) gp[x][base + i] = (uint8_t)(base + con[d].act[x][i]);
+                }
+                gs.cls.push_back(std::move(bc));
+            }
+            for (int x = 1; x < G; x++) gs.gElems.push_back(gp[x]);
+            for (int x = 1; x < G && !gs.skipWhy; x++) {
+                const int p = ord[x], f = fixAcc[x];
+                if (p == 2 && f == 0 && (N % 4) == 0) gs.skipWhy = "fixed-point-free involution with N = 0 mod 4 (order-2 parity theorem)";
+                else if (p > 2 && isOddPrime_(p) && (NM % p) != 0 && (((N - f) / p) & 1)) gs.skipWhy = "odd number of p-cycles in an element of odd prime order p (odd-prime parity theorem)";
+            }
+            int tp = snprintf(gs.name, sizeof(gs.name), "%s", D->name);
+            for (int d = 0; d < C; d++) if (mult[d]) tp += snprintf(gs.name + tp, sizeof(gs.name) - tp, mult[d] > 1 ? " %s^%d" : " %s", con[d].tag, mult[d]);
+            out.push_back(std::move(gs));
+            return;
+        }
+        for (int k = 0; k * con[c].size <= left; k++) {
+            bool ok = true;
+            for (int x = 1; x < G; x++) if (fixAcc[x] + k * con[c].fix[x] > 2) { ok = false; break; }
+            if (!ok) break;                          // more copies only add fixed points
+            mult[c] = k; for (int x = 1; x < G; x++) fixAcc[x] += k * con[c].fix[x];
+            rec(c + 1, left - k * con[c].size);
+            for (int x = 1; x < G; x++) fixAcc[x] -= k * con[c].fix[x];
+            mult[c] = 0;
+        }
+    };
+    rec(0, N);
+}
+
 }  // anonymous namespace
 
 // =============================================================================
-// Private K18A2 entry point (declared in k18a2.h, called only from
-// runExhaustiveSearch). Enumerates all K18 P1Fs with an automorphism of `order`,
+// Private K14A2 entry point (declared in k14a2.h, called only from
+// runExhaustiveSearch). Enumerates all K14 P1Fs with an automorphism of `order`,
 // deduplicates them, forwards each distinct class to resultCallback, and prints a
 // summary (only when m_bPrint). Worker count = kThreads.
 // =============================================================================
@@ -2940,21 +3108,23 @@ void enumShapesS3(std::vector<GrpShape>& out) {
 // spans the whole run -- printing a TOTAL per token would be six totals and no total.
 // Every figure is the per-unit accumulation of the rows above, so the = row is exactly their sum;
 // saved is cross-checked against g_emittedAll, which counts the same classes a different way.
-void K18A2::finishRepTable() {
+template<> void KnA2<KNA2_N>::finishRepTable() {
     if (!g_tbl) return;
     std::vector<std::string> cells;
     cells.push_back("TOTAL");
     cells.push_back("");
     cells.push_back(fmtElapsed(g_runSec));
     cells.push_back(fmtNodes(g_runNodes, g_runSec));
+    cells.push_back("");
+    cells.push_back("");
     cells.push_back(fmtCount(g_runSaved, g_runSavedAut));
     g_tbl->total(cells);
     delete g_tbl; g_tbl = nullptr;
 }
 
-void K18A2::runRepresentativeMethod(int order, int target) {
+template<> void KnA2<KNA2_N>::runRepresentativeMethod(int order, int target) {
     initEdges();
-    long long symCap = K18_REP_SYMCAP;                                    // overridable at runtime via env REP_SYMCAP
+    long long symCap = KNA2_REP_SYMCAP;                                    // overridable at runtime via env REP_SYMCAP
     if (const char* env = std::getenv("REP_SYMCAP")) symCap = atoll(env);   // e.g. force a type over-cap for oracle/estimate runs
     int nThreads = (kThreads > 0) ? kThreads : 1;   // worker count from the standard KThreads knob
 
@@ -2965,8 +3135,6 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     // order-3 types 1 and 3 without touching the intractable type 5.
     int estProbes = 0;                              // [ESTIMATE MODE] REP_ESTIMATE=P: P Knuth probes per rep, NO search
     if (const char* e = std::getenv("REP_ESTIMATE")) estProbes = atoi(e);
-    g_printRawLeft = 0;                             // [DIAG] REP_PRINTRAW=n: dump first n raw covers
-    if (const char* e = std::getenv("REP_PRINTRAW")) g_printRawLeft = atoi(e);
     // [SHARD/MEASURE] REP_LEVEL=L: on an over-cap type, enumerate the search tree level by level
     // (L = orbit-blocks committed), print the node count at each level 1..L, then process ONLY the
     // REP_RANGE=start:end slice of the level-L nodes (default: none -> just count/print). Level-L
@@ -2974,95 +3142,6 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     // count guides the shard granularity. No disk / no checkpoint (position == the range you run).
     int shardLevel = 0;
     if (const char* e = std::getenv("REP_LEVEL")) shardLevel = atoi(e);
-    g_pruneMaxFactors = 0;   // REP_PRUNELEVEL: skip per-node setwiseStab prune once >= N factors committed (0 = prune everywhere)
-    if (const char* e = std::getenv("REP_PRUNELEVEL")) g_pruneMaxFactors = atoi(e);
-    if (std::getenv("REP_NOPRUNE")) g_noClosurePrune = true;   // A/B: disable genM closure-ban prune (measures its node-cut value)
-    g_f17dump = std::getenv("REP_F17DUMP") != nullptr;         // [DIAG] sample the forced-17th-factor infertility obstruction
-    if (const char* e = std::getenv("REP_F17SUB")) { g_f17Sub = atoll(e); if (g_f17Sub < 1) g_f17Sub = 1; }   // histogram subsample stride
-    g_lvlStats = std::getenv("REP_LEVELSTATS") != nullptr;   // [DIAG] per-level node-count / branching profile
-    if (g_lvlStats) for (int i = 0; i < NM + 2; i++) g_lvlReached[i].store(0);
-    g_genStat = std::getenv("REP_GENSTAT") != nullptr;       // [DIAG] genM candidates built vs kept, per level
-    g_pDump = std::getenv("REP_PDUMP") != nullptr;           // [DIAG] row-pairing involution p per completion
-    g_probe1 = std::getenv("REP_PROBE1") ? atoi(std::getenv("REP_PROBE1")) : 0;   // [DIAG] pairing-invariant probe level
-    g_noOrbChk = std::getenv("REP_NOORBCHK") != nullptr;     // [PERF PROBE] measure the orbit-internal check cost
-    g_probeSeen.store(0); g_probeBad.store(0);
-    if (g_pDump) { std::lock_guard<std::mutex> lk(g_pdump_mtx); g_pSeen.clear(); }
-    if (g_genStat) for (int i = 0; i < NM + 2; i++) { g_genMade[i].store(0); g_genKept[i].store(0); }
-    g_swapCap = std::getenv("REP_SWAPCAP") != nullptr;       // [FILTER] a=4 >4-swap-pair prune (sound for a=4 blocks; ~49% deep-node cut measured)
-    // [PATFILTER] REP_PATTERN = neighbour-0 S/W target (empty => calculate from rows 2,3); legacy REP_PATONLY still read.
-    // REP_PATAPPLY enables the filter. Canonization is NOT forced off -- the neighbour-0 index is canon-compatible
-    // (K14: filter + canon ON is complete AND ~14x faster than baseline, ~75x faster than canon OFF).
-    if (const char* e = std::getenv("REP_PATTERN")) g_patOnly = e;
-    else if (const char* e2 = std::getenv("REP_PATONLY")) g_patOnly = e2;
-    else g_patOnly.clear();
-    // [PATFILTER] configurable mode via REP_PATAPPLY value (CASE-INSENSITIVE):
-    //   REP_PATAPPLY=oneperpair -> one-per-pair filter (each sigma0 pair one S + one W)
-    //   REP_PATAPPLY=calculate  -> calculate the alternating target from rows 2,3 (default)
-    //   REP_PATAPPLY=1/empty/other + REP_PATTERN=<S/W> -> fixed-pattern filter
-    // REP_PATPAIR= (any value) still selects one-per-pair standalone.
-    g_patApply = false;
-    g_patPair  = std::getenv("REP_PATPAIR") != nullptr;
-    if (const char* pa = std::getenv("REP_PATAPPLY")) {
-        std::string m(pa); for (char& ch : m) if (ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 'a';   // lowercase (case-insensitive match)
-        if (m == "oneperpair") g_patPair = true;      // select one-per-pair by name
-        else g_patApply = true;                       // "calculate"/"1"/empty/other -> calculate or REP_PATTERN fixed string
-    }
-    g_typeMask = std::getenv("REP_TYPEMASK") != nullptr;     // [TYPEMASK] one-per-pair + pair-connection prune inside genM (see the u==1 hook)
-    if (const char* r4 = std::getenv("REP_ROW4")) { char c = r4[0]; if (c >= 'a' && c <= 'z') c = c - 'a' + 'A'; if (c == 'S' || c == 'W') g_row4 = c; }   // [ROW4] pin row 4 type
-    if (g_row4 && m_bPrint) { printf("[K18-REP] REP_ROW4=%c : row 4 (the factor covering {0,4}) is restricted to %s factors\n", g_row4, g_row4 == 'S' ? "sigma0-FIXED (stay)" : "sigma0-PAIRED (swap)"); fflush(stdout); }
-    if (const char* dp = std::getenv("REP_DIAGPROBE")) g_diagProbe = atoi(dp);          // [DIAG] look-ahead probe from this depth up
-    if (const char* ds = std::getenv("REP_DIAGSUB")) { int v = atoi(ds); if (v > 0) g_diagSub = v; }
-    if (g_diagProbe > 0 && m_bPrint) { printf("[K18-REP] REP_DIAGPROBE=%d (every %dth node): measuring how often an uncovered diagonal has NO legal S row -- records only, never prunes\n", g_diagProbe, g_diagSub); fflush(stdout); }
-    if (const char* dq = std::getenv("REP_DIAGPRUNE")) {   // [FILTER] lo[:hi]
-        g_diagPruneLo = atoi(dq); const char* c = strchr(dq, ':'); if (c) g_diagPruneHi = atoi(c + 1);
-    }
-    {   // [OWNER] ON by default wherever there is a block column to own against; REP_OWNER=0 opts out.
-        const char* oe = std::getenv("REP_OWNER");
-        const bool off = oe && oe[0] == '0' && oe[1] == 0;    // REP_OWNER=0 -- the one value that disables
-        g_ownerMode = !off && std::getenv("REP_F3COMPLETE") != nullptr;
-    }
-    g_ownerVerbose = std::getenv("REP_OWNERALL") != nullptr; // [OWNER] name the owner of every rejected cover
-    // [AUT2ONLY] Same gate as the owner default, and NOT disabled by REP_OWNER=0: the case is the
-    // order-2 census whether or not blocks dedup among themselves. See the note at g_aut2Only.
-    g_aut2Only = std::getenv("REP_F3COMPLETE") != nullptr;
-    // (An EXPLICIT REP_OWNER without REP_F3COMPLETE, or on any N but 18, is refused by
-    //  checkOwnerEnv() in p1f.cpp -- in the host, so it exits 1 and never creates RESULT.
-    //  The default reaches neither case: it is conditioned on REP_F3COMPLETE, which is k18-only.)
-    g_sGen = std::getenv("REP_SGEN") != nullptr;             // [SGEN] forced-S rows enumerate on the quotient
-    g_patStat = std::getenv("REP_PATSTAT") != nullptr;       // [DIAG] sigma0 stay/swap pattern tally (completions + forced-17th + optional mid-level)
-    if (const char* e = std::getenv("REP_PATLEVEL")) g_patLevel = atoi(e);   // mid-level pattern sample depth
-    if (const char* e = std::getenv("REP_PATSUB")) { g_patSub = atoll(e); if (g_patSub < 1) g_patSub = 1; }   // mid-level sample stride
-    if (g_patStat) { std::lock_guard<std::mutex> lk(g_pat_mtx); g_patEmit.clear(); g_patF17.clear(); g_patMid.clear(); g_patMidSeen.store(0); }
-    g_ovlLevel = std::getenv("REP_CANONOVL") ? atoi(std::getenv("REP_CANONOVL")) : 0;   // [DIAG] tree-overlap probe (global; F3COMPLETE + COMPLETEPREFIX)
-    g_ovlKey = std::getenv("REP_CANONKEY") != nullptr;   // add canonKey (overlap); default off = fast symmetry+total only
-    if (g_ovlLevel > 0 && m_bPrint) { printf("[CANONOVL] probe ON: cap partials at size>=%d, sigma0-symmetry check%s, accumulate across blocks\n", g_ovlLevel, g_ovlKey ? " + canonKey overlap" : " (no canonKey -- fast)"); fflush(stdout); }
-    g_cref.clear();   // REP_CMAP: load reference c-ranks so startC/lastC print on the 0..N (~0..60k) scale
-    if (const char* e = std::getenv("REP_CMAP")) { FILE* f = fopen(e, "r"); if (f) { long long r; while (fscanf(f, "%lld", &r) == 1) g_cref.push_back(r); fclose(f); } std::sort(g_cref.begin(), g_cref.end());
-        if (m_bPrint) { printf("[CMAP] loaded %zu reference c-ranks from %s -> startC/lastC now on 0..%zu scale\n", g_cref.size(), e, g_cref.size()); fflush(stdout); } }
-    // REP_LOCATE=file1[,file2,...]: LOCATE MODE -- load target factorization(s), each a text file of N-1 lines,
-    // one factor per line as N ints (N/2 pairs). Report the block index whose committed cover is a subset of a target.
-    g_locTargets.clear();
-    if (const char* e = std::getenv("REP_LOCATE")) {
-        std::string spec(e); size_t pp = 0;
-        while (pp < spec.size()) {
-            size_t cc = spec.find(',', pp);
-            std::string path = spec.substr(pp, cc == std::string::npos ? std::string::npos : cc - pp);
-            pp = (cc == std::string::npos) ? spec.size() : cc + 1;
-            LocTarget T; T.nfac = 0; for (int a = 0; a < N; a++) for (int b = 0; b < N; b++) T.edgeFac[a][b] = 0;
-            FILE* fp = fopen(path.c_str(), "r"); if (!fp) { printf("[LOCATE] cannot open %s\n", path.c_str()); continue; }
-            char line[1024];
-            while (fgets(line, sizeof(line), fp)) {
-                int vals[64], nv = 0; char* q = line;
-                while (*q && nv < 64) { while (*q && !(*q >= '0' && *q <= '9')) q++; if (!*q) break; vals[nv++] = atoi(q); while (*q >= '0' && *q <= '9') q++; }
-                if (nv != N) continue;
-                int fi = T.nfac++;                               // factor index (bit position)
-                for (int k = 0; k + 1 < nv; k += 2) { int a = vals[k], b = vals[k + 1]; T.edgeFac[a][b] |= (1u << fi); T.edgeFac[b][a] |= (1u << fi); }
-            }
-            fclose(fp);
-            printf("[LOCATE] loaded target from %s : %d factors\n", path.c_str(), T.nfac);
-            if (T.nfac > 0) g_locTargets.push_back(std::move(T));
-        }
-    }
     // REP_RANGE=start:end                     -> process that block range on the work-queue (unset -> COUNT the level).
     // REP_RANGE=start:end:step(timeout,results) -> CHUNKED DENSITY SWEEP: walk [start,end) in `step`-block chunks;
     //   in each chunk process blocks from the chunk start, advancing to the next chunk the instant EITHER cap is hit
@@ -3101,90 +3180,84 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     const bool rawShard = (std::getenv("REP_RAWSHARD") != nullptr);
     g_fanOn = (std::getenv("REP_FANOUT") != nullptr);   // [FANOUT] per-depth tree-shape tally, printed with the progress rows
     g_precalc = (std::getenv("REP_PRECALC") != nullptr); // [PRECALC] prototype: list-filtered cover below each seed (block-threading pool)
-    if (g_precalc && m_bPrint) xprintf("[K18-REP] REP_PRECALC: PROTOTYPE -- precalculated orbit lists below each seed; trivial-stabilizer nodes only (use REP_PRUNELEVEL=1)\n");
+    if (g_precalc && m_bPrint) xprintf("[K" KNA2_NS "-REP] REP_PRECALC: PROTOTYPE -- precalculated orbit lists below each seed; trivial-stabilizer nodes only (use REP_PRUNELEVEL=1)\n");
     std::set<int> onlyTypes;
     if (const char* env = std::getenv("REP_ONLYTYPES")) {
         for (const char* p = env; *p; ) { int v = atoi(p); if (v > 0) onlyTypes.insert(v); while (*p && *p != ',') p++; while (*p == ',') p++; }
     }
 
+    {   // [OWNER] ON by default wherever there is a block column to own against; REP_OWNER=0 opts out.
+        const char* oe = std::getenv("REP_OWNER");
+        const bool off = oe && oe[0] == '0' && oe[1] == 0;    // REP_OWNER=0 -- the one value that disables
+        g_ownerMode = !off && std::getenv("REP_F3COMPLETE") != nullptr;
+    }
+    g_ownerVerbose = std::getenv("REP_OWNERALL") != nullptr; // [OWNER] name the owner of every rejected cover
+    // [AUT2ONLY] Same gate as the owner default, and NOT disabled by REP_OWNER=0: the case is the
+    // order-2 census whether or not blocks dedup among themselves. See the note at g_aut2Only.
+    g_aut2Only = std::getenv("REP_F3COMPLETE") != nullptr;
+    g_f17dump = std::getenv("REP_F17DUMP") != nullptr;   // [DIAG] forced-last-factor obstruction sampler
+    g_lvlStats = std::getenv("REP_LEVELSTATS") != nullptr;   // [DIAG] per-level node-count / branching profile
+    g_canonTest = std::getenv("REP_CANONTEST") != nullptr; g_vTest = std::getenv("REP_VTEST") != nullptr; g_fTest = std::getenv("REP_FTEST") != nullptr;   // [DIAG] cover() self-checks
+    if (g_lvlStats) for (int i = 0; i < NM + 2; i++) g_lvlReached[i].store(0);
+    g_pruneMaxFactors = 0;   // [PORT] REP_PRUNELEVEL: skip per-node setwiseStab once >= this many factors committed (0 = prune everywhere)
+    if (const char* e = std::getenv("REP_PRUNELEVEL")) g_pruneMaxFactors = atoi(e);
+    // [PATFILTER] REP_PATTERN = neighbour-0 S/W target (falls back to legacy REP_PATONLY). REP_PATAPPLY enables the
+    // filter (default off). Canonization is NOT forced off -- the neighbour-0 index is automorphism-derived.
+    if (const char* e = std::getenv("REP_PATTERN")) g_patOnly = e;
+    else if (const char* e2 = std::getenv("REP_PATONLY")) g_patOnly = e2;
+    else g_patOnly.clear();
+    // [PATFILTER] configurable mode via REP_PATAPPLY value (CASE-INSENSITIVE), as k18a2rep.cpp:
+    //   REP_PATAPPLY=oneperpair -> one-per-pair filter (each sigma0 pair one S + one W)
+    //   REP_PATAPPLY=calculate  -> calculate the alternating target from rows 2,3 (default)
+    //   REP_PATAPPLY=1/empty/other + REP_PATTERN=<S/W> -> fixed-pattern filter
+    // REP_PATPAIR= (any value) still selects one-per-pair standalone.
+    g_patApply = false;
+    g_patPair  = std::getenv("REP_PATPAIR") != nullptr;
+    if (const char* pa = std::getenv("REP_PATAPPLY")) {
+        std::string m(pa); for (char& ch : m) if (ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 'a';   // lowercase (case-insensitive match)
+        if (m == "oneperpair") g_patPair = true;      // select one-per-pair by name
+        else g_patApply = true;                       // "calculate"/"1"/empty/other -> calculate or REP_PATTERN fixed string
+    }
+    g_diagPruneLo = 0; g_diagPruneHi = NM;
+    if (const char* dq = std::getenv("REP_DIAGPRUNE")) {   // [FILTER] lo[:hi]
+        g_diagPruneLo = atoi(dq); const char* c = strchr(dq, ':'); if (c) g_diagPruneHi = atoi(c + 1);
+    }
+    g_sGen = std::getenv("REP_SGEN") != nullptr;             // [SGEN] forced-S rows enumerate on the quotient
+    g_typeMask = std::getenv("REP_TYPEMASK") != nullptr;
+    g_mrv = std::getenv("REP_MRV") != nullptr;             // [MRV] lookahead + most-constrained anchor in cover()   // [TYPEMASK] one-per-pair + pair-connection prune inside genM (see the u==1 hook)
+    g_rowPins.clear();   // [ROW] REP_ROW=<r>:<j>[,...] slice filter; r, j in 2..N-1, r != j
+    if (const char* e = std::getenv("REP_ROW")) {
+        for (const char* p = e; *p; ) {
+            int r = atoi(p), j = -1; const char* q = p; while (*q && *q != ',' && *q != ':') q++; if (*q == ':') j = atoi(q + 1);
+            if (r < 2 || r >= N || j < 2 || j >= N || j == r) { printf("[K" KNA2_NS "-REP] REP_ROW=%s: each pin is <r>:<j> with r, j in 2..%d and r != j -- stop\n", e, N - 1); exit(1); }
+            g_rowPins.push_back({ (uint8_t)r, (uint8_t)j });
+            while (*p && *p != ',') p++; while (*p == ',') p++;
+        }
+        if (m_bPrint) printf("[K" KNA2_NS "-REP] REP_ROW=%s: slice filter ON -- the factor covering {0,r} must pair 1 with j\n", e);
+    }
+    g_patStat =std::getenv("REP_PATSTAT") != nullptr;   // [PORT] REP_PATSTAT: stay/swap pattern tally
+    if (g_patStat) { std::lock_guard<std::mutex> lk(g_pat_mtx); g_patEmit.clear(); g_patF17.clear(); }
+    g_patByClass = std::getenv("REP_PATBYCLASS") != nullptr;   // [REP_PATBYCLASS] per-class nbr0-indexed pattern collection (every detection)
+    if (g_patByClass) { std::lock_guard<std::mutex> lk(g_pat_mtx); g_patClassPats.clear(); g_patClassAut.clear(); g_patClassFirst.clear(); }
+    if (g_patByClass && !g_patApply && g_pruneMaxFactors == 0) { g_pruneMaxFactors = 1; if (m_bPrint) printf("[K" KNA2_NS "-REP] REP_PATBYCLASS: canonization AUTO-DISABLED (REP_PRUNELEVEL forced to 1) so ALL original patterns per class are seen\n"); }
+    if (m_bPrint && g_patApply && !g_patOnly.empty()) printf("[K" KNA2_NS "-REP] REP_PATAPPLY pattern=%s: neighbour-0 filter ON (position=F[0]-1, S=alpha-fixed); canonization per REP_PRUNELEVEL=%d\n", g_patOnly.c_str(), g_pruneMaxFactors);
+    if (m_bPrint && g_patApply && g_patOnly.empty()) printf("[K" KNA2_NS "-REP] REP_PATAPPLY (calculate): target from rows 2,3 (dup {2,3} across pairs, row1=S); canonization per REP_PRUNELEVEL=%d\n", g_pruneMaxFactors);
+    if (const char* e = std::getenv("REP_F17SUB")) { g_f17Sub = atoll(e); if (g_f17Sub < 1) g_f17Sub = 1; }
     g_bprint = m_bPrint;
+    g_rootThreads = kThreads;
+    g_rootCountOnly = std::getenv("REP_COUNTROOT") != nullptr;
+    g_rootCap = std::getenv("REP_ROOTCAP") ? atoll(std::getenv("REP_ROOTCAP")) : 0;
+    g_rootCapRaw = g_rootCap > 0 && strstr(std::getenv("REP_ROOTCAP"), ":raw") != nullptr;   // ":raw" also skips the C(alpha) reduction
+    if (g_rootCap > 0 && m_bPrint) { printf("[K" KNA2_NS "-REP] REP_ROOTCAP=%lld: root walk stops after that many candidates -- a HARVEST of early blocks, NOT a census\n", g_rootCap); fflush(stdout); }
     g_nodes.store(0); g_emits.store(0); g_last_print_nodes = 0;
-    g_target = target; g_stop.store(false); g_harvest.clear(); g_banked.store(0); g_f1.store(0); g_f2.store(0); g_autHist.clear(); g_dupCovers.store(0);   // harvest mode (target>0 -> stop after `target` classes)
+    g_target = target; g_stop.store(false); g_harvest.clear(); g_banked.store(0); g_f1.store(0); g_f2.store(0);   // harvest mode (target>0 -> stop after `target` classes)
     // Live result emission: every globally-new class goes straight to the normal result
     // pipeline (mutex-serialized in emit()); a long or killed run keeps everything sent.
     g_sendResult = [this](const unsigned char* s, int aut) { if (resultCallback) resultCallback(cbClass, s, aut, 1, 2); };   // |Aut| rides the callback's free r4 slot
     g_t0 = std::chrono::steady_clock::now();
-    g_f17Total.store(0); g_f17NextSec.store(60); g_maxKids.store(0); g_maxNQ.store(0); g_monNextSec.store(5); { std::lock_guard<std::mutex> lk(g_f17_mtx); g_f17Hist.clear(); g_f17ClashHist.clear(); }   // [DIAG] REP_F17DUMP reset
+    g_f17Total.store(0); g_f17NextSec.store(60); { std::lock_guard<std::mutex> lk(g_f17_mtx); g_f17Hist.clear(); }   // [DIAG] REP_F17DUMP reset
     g_last_print = g_t0;
     g_order = order;
-
-    // [DISABLED] REP_RANGE -- the level-3 chunked sweep. Superseded on k18 by the block driver
-    // and not worth reasoning about twice, so it is refused rather than left as a second way to
-    // sweep the same space:
-    //   * it walks the search tree WITHOUT block canonicalization, so it re-searches starters that
-    //     canonize together -- t8 a=0 is 57,752 raw blocks against 25,530 canonical ones;
-    //   * it has no end of its own. REP_RANGE=1:1000000 stops on the COUNT, long past the fertile
-     //    region, and the documented way to finish early was to watch the Chao1 est-total flatten
-    //     -- a signal this project has been burned by repeatedly (a t8 per-block estimate of
-    //     606/666 was overturned to thousands);
-    //   * it prints no resume point, so an interrupted sweep cannot be continued exactly.
-    // REP_F3COMPLETE + REP_F3A gives the same coverage with a canonical block list, a printed
-    // resume value and a real DONE line. k14/k16/k20 keep REP_RANGE: they have no block driver.
-    if (std::getenv("REP_RANGE")) {
-        printf("[K18-REP] REP_RANGE is DISABLED for k18 -- the level-3 chunked sweep is superseded by the\n");
-        printf("[K18-REP]   block driver, which canonizes the block list, ENDS, and prints a resume point.\n");
-        printf("[K18-REP]   Use:  REP_F3COMPLETE=1 REP_F3COUNT=1 REP_F3A=<a> [REP_F3START=<c>] [REP_F3STOP=<c>]\n");
-        printf("[K18-REP]   t9 a=0: 57,216 raw -> 8,713 canonical blocks.  t8 a=0: 57,752 -> 25,530.\n");
-        printf("[K18-REP]   (k14/k16/k20 still accept REP_RANGE; they have no block driver.)\n");
-        fflush(stdout);
-        exit(1);
-    }
-
-
-    // [SERVICE] REP_CANONFILE=<file>: re-canonicalize a class file and write it to RESULT, then
-    // stop. No search, no blocks. A canonical form is only canonical for ONE canonizer, so a class
-    // file produced by any other one shares almost no matrix with the form this engine emits -- a
-    // stored P-file of the t8 census matched the catalog on 1 class in 9,622. Feeding it through
-    // canonKey() rewrites every record in the labeling the engine emits today AND recovers the
-    // real |Aut| that a P-file header never carried (it always printed 0), so the output is
-    // exactly what a run of the matching case would have produced.
-    if (const char* cf = std::getenv("REP_CANONFILE")) {
-        FILE* fp = fopen(cf, "r");
-        if (!fp) { printf("[K18-REP] REP_CANONFILE: cannot open %s -- stop\n", cf); fflush(stdout); exit(1); }
-        RepWorker pw;                              // canonKey needs no shared state (sets pw.lastAut)
-        std::vector<Match> facs; long long in = 0, out = 0;
-        auto flush = [&]() {
-            if (facs.size() != (size_t)NM) { facs.clear(); return; }
-            in++;
-            std::string key = pw.canonKey(facs);
-            if (g_sendResult) {
-                unsigned char src[NM * N];
-                for (int k = 0; k < NM; k++) { uint8_t adj[N]; for (int u = 0; u < N; u++) adj[u] = (uint8_t)key[k * N + u]; adj_to_src(adj, src + k * N); }
-                g_sendResult(src, pw.lastAut / 2); out++;
-            }
-            g_autHist[pw.lastAut / 2]++;
-            facs.clear();
-        };
-        char line[1024];
-        while (fgets(line, sizeof(line), fp)) {
-            int vals[64], nv = 0; char* q = line;
-            while (*q && nv < 64) { while (*q && !(*q >= '0' && *q <= '9')) q++; if (!*q) break; vals[nv++] = atoi(q); while (*q >= '0' && *q <= '9') q++; }
-            if (nv == N) {                          // a factor row: N ints = N/2 pairs
-                Match m; for (int u = 0; u < N; u++) m[u] = 0xFF;
-                for (int k = 0; k + 1 < nv; k += 2) { m[vals[k]] = (uint8_t)vals[k + 1]; m[vals[k + 1]] = (uint8_t)vals[k]; }
-                facs.push_back(m);
-                if (facs.size() == (size_t)NM) flush();
-            }
-        }
-        flush(); fclose(fp);
-        std::string h; for (auto& kv : g_autHist) { char t[24]; snprintf(t, sizeof(t), "%s%d:%d", h.empty() ? "" : " ", kv.first, kv.second); h += t; }
-        printf("[K18-REP] REP_CANONFILE: %lld results read from %s, %lld written, aut{%s}\n", in, cf, out, h.c_str());
-        printf("[K18-REP] REP_CANONFILE: records are in the canonical form THIS build emits -- re-run any\n");
-        printf("[K18-REP]                comparison against files written by the same build.\n");
-        fflush(stdout);
-        return;
-    }
-
 
     std::set<std::string>      gcanon;   // global distinct canonical keys (across all types)
     std::map<std::string, int> gautOf;   // global canonical key -> 2*|Aut|
@@ -3193,11 +3266,20 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     const bool isV4 = (order == kOrderV4);          // V4 mode: Klein four-group instead of <alpha>
     const bool isE9 = (order == kOrderE9);          // E9 mode: C3 x C3 two-generator sweep
     const bool isS3 = (order == kOrderS3);          // S3 mode: symmetric-group-on-3 two-generator sweep
-    const bool isGrp = isV4 || isE9 || isS3;        // any non-cyclic (group-shape) mode
+    const bool isGen = isGenCode(order);             // [GENGRP] generic small-group leg (D8, Q8, C4xC2, C2xC2xC2, A4, D10)
+    const bool isBlk = isE9 || isS3 || isGen;       // block-structured group shapes (GrpShape + buildCentralizerBlocks)
+    const bool isGrp = isV4 || isBlk;        // any non-cyclic (group-shape) mode
+    {   // [GSYM] default on for the block group legs, where the leaf test rejects nearly every completion
+        const char* gs = std::getenv("REP_GSYM");
+        g_gsym = gs ? (gs[0] != '0') : isBlk;
+    }
     std::vector<std::vector<int>> types;            // cyclic: all cycle types of this order
     std::vector<V4Shape> shapes;                    // V4: vertex shapes (see enumShapesV4)
-    std::vector<GrpShape> gshapes;                  // E9/S3: fully-constructed group shapes
-    if (isV4) enumShapesV4(shapes); else if (isE9) enumShapesE9(gshapes); else if (isS3) enumShapesS3(gshapes); else enumTypes(order, types);
+    std::vector<GrpShape> gshapes;                  // E9/S3/generic: fully-constructed group shapes
+    if (isV4) enumShapesV4(shapes); else if (isE9) enumShapesE9(gshapes); else if (isS3) enumShapesS3(gshapes);
+    else if (isGen) { std::string err; enumShapesGen(order, gshapes, err);
+        if (!err.empty()) { printf("[K" KNA2_NS "-REP] group %s: INTERNAL %s -- report this\n", ordName(order), err.c_str()); fflush(stdout); return; } }
+    else enumTypes(order, types);
     g_numTypes = (int)(isV4 ? shapes.size() : isGrp ? gshapes.size() : types.size());
     // The run's ONE table.  runRepresentativeMethod is called once
     // per REP_ORDERS token, so this is guarded: the title, and the first column-name row, are
@@ -3205,45 +3287,38 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     // driver builds its own table (column set B) and is excluded here.
     if (m_bPrint && !g_tbl && !std::getenv("REP_F3COMPLETE")) {
         static char title[160];
-        snprintf(title, sizeof(title), "Factorization of K%d P1F |Aut| > 2", N);
+        // The title names what this run searches: the REP_ORDERS (or REP_ORDER) tokens as subgroups
+        // that Aut must contain -- e.g. "Aut contains C7" or "Aut contains C21, C11 or V4".
+        std::string what;
+        const char* envs = std::getenv("REP_ORDERS"); if (!envs) envs = std::getenv("REP_ORDER");
+        auto addTok = [&](int v) {
+            if (!what.empty()) what += ", ";
+            what += (v == kOrderV4) ? "V4" : (v == kOrderE9) ? "C3xC3" : (v == kOrderS3) ? "S3" : isGenCode(v) ? std::string(kGenNames[kOrderGenBase - v]) : "C" + std::to_string(v);
+        };
+        if (envs) {
+            for (const char* p = envs; *p; ) {
+                int v = atoi(p);
+                if ((*p == 'V' || *p == 'v') && p[1] == '4') v = kOrderV4;
+                if ((*p == 'E' || *p == 'e') && p[1] == '9') v = kOrderE9;
+                if ((*p == 'S' || *p == 's') && p[1] == '3') v = kOrderS3;
+                if (int gc = knA2GenGroupCode(p)) v = gc;
+                if (v > 1 || v == kOrderV4 || v == kOrderE9 || v == kOrderS3 || isGenCode(v)) addTok(v);
+                while (*p && *p != ',') p++; while (*p == ',') p++;
+            }
+        } else addTok(order);
+        const size_t lastComma = what.rfind(", ");
+        if (lastComma != std::string::npos) what.replace(lastComma, 2, " or ");
+        snprintf(title, sizeof(title), "Factorization of K%d P1F, Aut contains %s", N, what.c_str());
         g_tbl = new LogTable(title, kColsA, kTotalsA, sizeof(kColsA) / sizeof(kColsA[0]));
     }
     int g_typeCounter = 0;                          // 1-based index of the type currently processed
     int g_typeSkipped = 0;                          // types skipped by a theorem or by REP_ONLYTYPES -- counted here, reported once at the end of the order
     if (m_bPrint) {
-        if (noSkip) printf("[K18-REP] REP_NOSKIP: odd-prime parity-theorem skip DISABLED (theorem-verification mode)\n");
-        if (g_patApply && !g_patOnly.empty()) printf("[K18-REP] REP_PATAPPLY pattern=%s: neighbour-0 filter ON; canonization per REP_PRUNELEVEL=%d; block canon %s\n", g_patOnly.c_str(), g_pruneMaxFactors, std::getenv("REP_F3RAW") ? "OFF (raw)" : "ON");
-        if (g_patApply && g_patOnly.empty()) printf("[K18-REP] REP_PATAPPLY (calculate): target from rows 2,3 (dup {2,3} across pairs, row1=S); canonization per REP_PRUNELEVEL=%d; block canon %s\n", g_pruneMaxFactors, std::getenv("REP_F3RAW") ? "OFF (raw)" : "ON");
-        if (estProbes > 0) printf("[K18-REP] REP_ESTIMATE=%d : Knuth tree-size probes per rep -- NO SEARCH, output is an ESTIMATE, not a result\n", estProbes);
+        if (noSkip) printf("[K" KNA2_NS "-REP] REP_NOSKIP: odd-prime parity-theorem skip DISABLED (theorem-verification mode)\n");
+        if (estProbes > 0) printf("[K" KNA2_NS "-REP] REP_ESTIMATE=%d : Knuth tree-size probes per rep -- NO SEARCH, output is an ESTIMATE, not a result\n", estProbes);
 
-        if (target > 0) printf("[K18-REP] HARVEST MODE: stop after %d distinct classes (COMPLETE only if %d == true count, else a LOWER BOUND)\n", target, target);
-        if (rawShard) printf("[K18-REP] REP_RAWSHARD: branches = raw potential candidates (symmetry NOT reduced) -- LEVEL counts are a superset, mid-range seek is cheap; distinct-set correct via global dedup\n");
-        {
-            int nf = 0; for (int i = 0; i < 4; i++) if (m_v4Row[i] && m_v4Val[i]) nf++;
-            if (nf) {
-                printf("[K18-REP] V4 SHARD FILTERS (search frame):");
-                for (int i = 0; i < 4; i++) if (m_v4Row[i] && m_v4Val[i]) printf("  0-%d factor pairs 1-%d;", m_v4Row[i], m_v4Val[i]);
-                printf("  (SHARD run -- NOT a complete order)\n");
-                // Consistency validation: each condition below makes the shard PROVABLY
-                // EMPTY (the run would burn its full time and return 0 classes) -- say so.
-                for (int i = 0; i < 4; i++) {
-                    const int r = m_v4Row[i], v = m_v4Val[i];
-                    if (!r && !v) continue;
-                    if (!r || !v || r < 2 || r > N - 1 || v < 2 || v > N - 1)
-                        printf("[K18-REP] *** V4 FILTER %d INVALID: row=%d val=%d (both must be set, in 2..%d) -- shard is EMPTY\n", i + 1, r, v, N - 1);
-                    else if (r == v)
-                        printf("[K18-REP] *** V4 FILTER %d INVALID: row == val == %d (no vertex partners both 0 and 1) -- shard is EMPTY\n", i + 1, r);
-                    for (int j = i + 1; j < 4; j++) {
-                        if (!m_v4Row[j] || !m_v4Val[j]) continue;
-                        if (m_v4Row[j] == r && m_v4Val[j] != v)
-                            printf("[K18-REP] *** V4 FILTERS %d,%d CONTRADICT: row %d demands val %d AND %d -- shard is EMPTY\n", i + 1, j + 1, r, v, m_v4Val[j]);
-                        if (m_v4Val[j] == v && m_v4Row[j] != r)
-                            printf("[K18-REP] *** V4 FILTERS %d,%d CONTRADICT: val %d demanded in rows %d AND %d (edge {1,%d} is in ONE factor) -- shard is EMPTY\n", i + 1, j + 1, v, r, m_v4Row[j], v);
-                    }
-                }
-            }
-        }
-        if (g_printRawLeft > 0) printf("[K18-REP] REP_PRINTRAW=%d : raw search-frame cover of the first %d classes will be printed\n", g_printRawLeft, g_printRawLeft);
+        if (target > 0) printf("[K" KNA2_NS "-REP] HARVEST MODE: stop after %d distinct classes (COMPLETE only if %d == true count, else a LOWER BOUND)\n", target, target);
+        if (rawShard) printf("[K" KNA2_NS "-REP] REP_RAWSHARD: branches = raw potential candidates (symmetry NOT reduced) -- LEVEL counts are a superset, mid-range seek is cheap; distinct-set correct via global dedup\n");
         fflush(stdout);
     }
 
@@ -3253,9 +3328,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
         const std::vector<int>* type = isGrp ? nullptr : &types[typeIdx];
         if (!isGrp && only_fpf) { bool hasFix = false; for (int p : *type) if (p == 1) hasFix = true; if (hasFix) continue; }
         RepShared sh;                    // shared read-only data for this type
-        sh.order = isV4 ? 4 : isE9 ? 9 : isS3 ? 6 : order;   // |G| (informational; the search iterates sh.gElems)
-        for (int i = 0; i < 4; i++)      // compact the host's (row,val) shard-filter pairs
-            if (m_v4Row[i] && m_v4Val[i]) { sh.v4Row[sh.nV4] = m_v4Row[i]; sh.v4Val[sh.nV4] = m_v4Val[i]; sh.nV4++; }
+        sh.order = isV4 ? 4 : isE9 ? 9 : isS3 ? 6 : isGen ? gshapes[typeIdx].gOrder : order;   // |G| (informational; the search iterates sh.gElems)
         char tstr[64]; int tp = 0;       // human-readable type/shape string
         if (isV4) {
             // Klein four-group for this shape: gElems = the three involutions {a, b, ab}
@@ -3265,7 +3338,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             sh.gElems.clear();
             sh.gElems.push_back(pa); sh.gElems.push_back(pb); sh.gElems.push_back(composePerm(pa, pb));
             snprintf(tstr, sizeof(tstr), "V4 fx%d,%d,%d F%d", sp.f + 2 * sp.s1, sp.f + 2 * sp.s2, sp.f + 2 * sp.s3, sp.F);
-        } else if (isE9 || isS3) {
+        } else if (isBlk) {
             // Two-generator group for this shape: gElems = all non-identity elements
             const GrpShape& gsp = gshapes[typeIdx];
             sh.gElems = gsp.gElems;
@@ -3320,10 +3393,10 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 continue;
             }
         }
-        if (isE9 || isS3) {
+        if (isBlk) {
             const GrpShape& gsp = gshapes[typeIdx];
-            if (sh.gElems.size() != (isE9 ? 8u : 5u)) {   // paranoia: generator closure must be the full group
-                if (m_bPrint) { printf("[K18-REP]  type %-14s (type %d/%d) SKIPPED: INTERNAL closure size %zu != %u -- report this\n", tstr, tIdx, g_numTypes, sh.gElems.size(), isE9 ? 8u : 5u); fflush(stdout); }
+            if (sh.gElems.size() != (isGen ? (size_t)gsp.gOrder - 1 : isE9 ? 8u : 5u)) {   // paranoia: generator closure must be the full group
+                if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s (type %d/%d) SKIPPED: INTERNAL closure size %zu != %u -- report this\n", tstr, tIdx, g_numTypes, sh.gElems.size(), isGen ? (unsigned)gsp.gOrder - 1 : isE9 ? 8u : 5u); fflush(stdout); }
                 continue;
             }
             if (!noSkip && gsp.skipWhy) {
@@ -3346,7 +3419,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
         // fixed-point-free when N == 0 (mod 4) (order-2 parity theorem); p odd with
         // (N-1) % p != 0 -> even number of p-cycles (odd-prime parity theorem). Retires
         // the dense over-cap junk types of composite orders (e.g. K20 6^1.1^14, 9^1.1^11)
-        // and the lemma-empty order-2 types with more than two fixed points.
+        // and the lemma-empty types (any prime p) with more than two fixed points.
         if (!isGrp && !noSkip) {
             const char* why = nullptr; int badp = 0;
             for (int p = 2; p <= order && !why; p++) {
@@ -3361,6 +3434,10 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     if (f > 2) { why = "sigma^(k/2) fixes > 2 vertices (involution fixed-point lemma)"; badp = 2; }
                     else if (f == 0 && (N % 4) == 0) { why = "sigma^(k/2) fixed-point-free with N = 0 mod 4 (order-2 parity theorem)"; badp = 2; }
                 } else if ((NM % p) != 0 && (t & 1)) { why = "odd number of p-cycles in sigma^(k/p) (odd-prime parity theorem)"; badp = p; }
+                // [LEMMA] docs/K22_spec.md §3.1: ANY non-identity automorphism of a P1F fixes <= 2 vertices
+                // (two sigma-fixed factors would close a cycle inside the fixed set). The p = 2 case is the
+                // involution lemma above; this extends it to every prime, e.g. K22 order 21: 7^1 3^5.
+                else if (f > 2) { why = "sigma^(k/p) fixes > 2 vertices (fixed-point lemma)"; badp = p; }
             }
             if (why) {
                 g_typeSkipped++;
@@ -3371,26 +3448,23 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             g_typeSkipped++;
             continue;
         }
-        // [GUARD] Checked here -- on the type actually about to be SEARCHED, past every skip. The sigma0
-        // stay/swap machinery assumes sigma0 is FIXED-POINT-FREE: the one-per-pair rule is a t9 theorem
-        // (both-stays => 4-cycle), the vertex-1 mask reads v^1 as sigma0's partner of v, and genS places
-        // edges in mirror pairs. On a type with fixed points (t8 = 2^8 1^2 fixes two vertices, whose slots
-        // still look like a pair) every one of those is wrong and NOTHING downstream would complain -- the
-        // census would just quietly lose classes. cmd SET persists for the window, so a flag left over from
-        // an a=4 run is the realistic way this happens.
-        { int nfix = 0; for (int i = 0; i < N; i++) if (sh.alpha[i] == (uint8_t)i) nfix++;
+        // [GUARD] (from k18a2rep.cpp) Checked on the type actually about to be SEARCHED, past every skip. The
+        // sigma0 stay/swap machinery assumes sigma0 is FIXED-POINT-FREE: the one-per-pair rule is a t9 theorem
+        // (both-stays => 4-cycle), the vertex-1 mask reads v^1 as sigma0's partner of v, and genS places edges
+        // in mirror pairs. On a type with fixed points every one of those is wrong and nothing downstream would
+        // complain -- the census would just quietly lose classes.
+        if (!isGrp) { int nfix = 0; for (int i = 0; i < N; i++) if (sh.alpha[i] == (uint8_t)i) nfix++;
           const char* bad = !nfix ? nullptr
-                          : g_typeMask ? "REP_TYPEMASK" : g_sGen ? "REP_SGEN" : g_row4 ? "REP_ROW4"
+                          : g_typeMask ? "REP_TYPEMASK" : g_sGen ? "REP_SGEN"
                           : g_patPair ? "REP_PATPAIR" : g_patApply ? "REP_PATAPPLY"
                           : g_diagPruneLo > 0 ? "REP_DIAGPRUNE" : nullptr;
-          if (bad) { printf("[K18-REP] %s needs a fixed-point-free sigma0, but type %s (about to be searched) fixes %d vertices -- stop\n", bad, tstr, nfix); fflush(stdout); exit(1); }
-          }   // [SUBSET] is gone: column set A puts its two facts in the Symmetry and Type columns, and the block driver puts them in the table title
-        // [DIAGPRUNE] Sound only in the a=4 column: there every sigma0-fixed factor carries exactly ONE
-        // diagonal (dichotomy + 9 S rows for 9 diagonals). In the a=0 column the single fixed factor is D,
-        // which carries all nine, so the probe's one-diagonal rule would reject the very row that must exist.
+          if (bad) { printf("[K" KNA2_NS "-REP] %s needs a fixed-point-free sigma0, but type %s (about to be searched) fixes %d vertices -- stop\n", bad, tstr, nfix); fflush(stdout); exit(1); }
+        }
+        // [DIAGPRUNE] Sound only in the K18 a=4 column: there every sigma0-fixed factor carries exactly ONE
+        // diagonal (dichotomy + 9 S rows for 9 diagonals). Refused anywhere else.
         if (g_diagPruneLo > 0) {
             const int a0chk = std::getenv("REP_F3A") ? atoi(std::getenv("REP_F3A")) : 0;
-            if (a0chk != 4) { printf("[K18-REP] REP_DIAGPRUNE is sound only for the a=4 column (REP_F3A=4), but REP_F3A=%d -- stop\n", a0chk); fflush(stdout); exit(1); }
+            if (N != 18 || a0chk != 4) { printf("[K" KNA2_NS "-REP] REP_DIAGPRUNE is sound only for the K18 a=4 column (REP_F3A=4), but N=%d REP_F3A=%d -- stop\n", N, a0chk); fflush(stdout); exit(1); }
         }
         // [SETUP TIMING] Everything from here to the worker fan-out runs BEFORE the first search
         // node, and without these lines an over-cap order-2 leg looks hung for its first half
@@ -3403,18 +3477,18 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             auto now = std::chrono::steady_clock::now();
             const double s = std::chrono::duration<double>(now - setupT0).count();
             setupT0 = now;
-            xprintf("[K18-REP]  type %-14s SETUP %-14s %8.1fs  n=%lld\n", tstr, stage, s, n);
+            xprintf("[K" KNA2_NS "-REP]  type %-14s SETUP %-14s %8.1fs  n=%lld\n", tstr, stage, s, n);
             fflush(stdout);
         };
         if (isV4) buildCentralizerV4(shapes[typeIdx], sh.Calpha, symCap);   // V4 |C| is tiny -> always enumerable
-        else if (isE9 || isS3) buildCentralizerBlocks(gshapes[typeIdx].cls, sh.Calpha, symCap);   // block centralizer; over cap -> generator path below
+        else if (isBlk) buildCentralizerBlocks(gshapes[typeIdx].cls, sh.Calpha, symCap);   // block centralizer; over cap -> generator path below
         else buildCentralizer(sh.alpha, sh.Calpha, symCap);   // empty => run this type without symmetry-breaking
-        if ((isE9 || isS3) && !sh.Calpha.empty()) {   // paranoia: every symmetry element must commute with the whole group
+        if (isBlk && !sh.Calpha.empty()) {   // paranoia: every symmetry element must commute with the whole group
             size_t step = sh.Calpha.size() > 100000 ? sh.Calpha.size() / 100000 + 1 : 1;
             bool okC = true;
             for (size_t gi = 0; gi < sh.Calpha.size() && okC; gi += step)
                 for (const auto& e : sh.gElems) if (composePerm(sh.Calpha[gi], e) != composePerm(e, sh.Calpha[gi])) { okC = false; break; }
-            if (!okC) { if (m_bPrint) { printf("[K18-REP]  type %-14s SKIPPED: INTERNAL centralizer element does not commute -- report this\n", tstr); fflush(stdout); } continue; }
+            if (!okC) { if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s SKIPPED: INTERNAL centralizer element does not commute -- report this\n", tstr); fflush(stdout); } continue; }
         }
         sh.Cinv.resize(sh.Calpha.size());
         for (size_t i = 0; i < sh.Calpha.size(); i++) for (int x = 0; x < N; x++) sh.Cinv[i][sh.Calpha[i][x]] = (uint8_t)x;
@@ -3423,21 +3497,43 @@ void K18A2::runRepresentativeMethod(int order, int target) {
         setupTick("centralizer", (long long)sh.Calpha.size());   // n = |C(alpha)| enumerated, 0 = over-cap
 
         // 1. collect the raw first-orbit tasks (single-threaded root enumeration)
-        std::vector<Match> raw;
+        ChunkList raw;
+        g_rootCount.store(0);
         { RepWorker collector; collector.sh = &sh; collector.collectTasks(raw); }
+        if (g_rootCountOnly) {
+            // [COUNTROOT] What the real setup of this type would hold: the chunked task list (8 bytes
+            // each, plus one per-thread part while joining) and then the list plus the OrbFpTable
+            // (5 bytes per slot, slots = next power of 2 >= 4/3 n). Printed, nothing stored or searched.
+            const long long n = g_rootCount.load();
+            const size_t cap = OrbFpTable::slotsFor((size_t)n);
+            const double listGB = (double)n * 8 / 1073741824.0, tblGB = (double)cap * 5 / 1073741824.0;
+            const double peakGB = listGB + tblGB;
+            if (m_bPrint) { std::chrono::duration<double> d = std::chrono::steady_clock::now() - setupT0;
+                printf("[K" KNA2_NS "-REP]  type %-14s COUNTROOT: %lld root candidates in %.1fs, |C| = %zu -> setup memory ~ %.2f GB peak (list %.2f GB, table %.2f GB)\n",
+                       tstr, n, d.count(), sh.Calpha.size(), peakGB, listGB, tblGB); fflush(stdout); }
+            continue;
+        }
         setupTick("collectTasks", (long long)raw.size());
 
         // 2. reduce tasks by C(alpha): keep ONE representative per C(alpha)-orbit. Each orbit is
         //    handled once, so the cost is O(#reps * <group walk>), not O(#rawTasks * |C|).
         // First collapse raw tasks to one matching per distinct alpha-orbit (collectTasks may emit
         // several matchings from the same orbit), keyed by the alpha-orbit serialization.
-        std::unordered_map<std::string, int> orbIdx;   // alpha-orbit key -> unique-task index
-        std::vector<Match> uniq;                        // one matching per distinct alpha-orbit
-        std::vector<std::string> uniqKey;               // its alpha-orbit key
-        for (auto& m : raw) {
-            std::string k = orbitKey(m, sh.gElems);
-            if (orbIdx.emplace(k, (int)uniq.size()).second) { uniq.push_back(m); uniqKey.push_back(std::move(k)); }
+        // [SETUPKEY] The key is the orbit's SMALLEST member (orbitMinKey), a fixed 1-byte-per-vertex
+        // array hashed in place -- the same orbit identity as orbitKey's sorted concatenation, without a
+        // heap string per lookup. At K22 order 7 (13.9M raw tasks, |C| = 2058) the string keys made this
+        // step and the C-orbit loop below cost ~3 minutes on one thread. Same uniq order, same reps.
+        // [SETUPMEM] Collapsed IN PLACE (the first occurrence of each orbit moves forward in `raw`, which
+        // then becomes `uniq` without a copy), keyed through OrbFpTable, which stores no keys. Same uniq
+        // order as before, so the same reps; peak memory ~ the task list + 12 bytes per table slot.
+        OrbFpTable orbTbl; orbTbl.init(raw.size(), &raw, &sh.gElems);
+        size_t wq = 0;
+        for (size_t r = 0; r < raw.size(); r++) {
+            Match k = orbitMinKey(raw[r], sh.gElems);
+            if (orbTbl.insert(k, (uint32_t)wq)) { raw.moveTo(wq, r); wq++; }
         }
+        raw.shrinkTo(wq);
+        ChunkList& uniq = raw;                          // one matching per distinct alpha-orbit (same storage)
         setupTick("orbit-collapse", (long long)uniq.size());
 
         std::vector<Task> reps;
@@ -3445,17 +3541,58 @@ void K18A2::runRepresentativeMethod(int order, int target) {
         if (!sh.Calpha.empty()) {
             // C(alpha) enumerated (dense types): mark each C(alpha)-orbit by applying every gamma,
             // and record the orbit's STABILIZER so its (large, productive) subtree is symmetry-broken.
-            for (size_t i = 0; i < uniq.size(); i++) {
-                if (seen[i]) continue;
-                seen[i] = 1;
-                std::vector<int> stab;                  // gammas fixing this orbit (setwise)
+            // [ROOTCAP] A harvest skips the C(alpha) reduction: every collected orbit becomes a block with
+            // only the identity in its stabilizer (no symmetry breaking below it). Repeats of a class are
+            // removed by the global canonical dedup as always; the time goes to searching, not to setup
+            // (at K26 5^5 1, |C| = 375,000, the reduction alone ran past 4 minutes).
+            if (g_rootCap > 0 && g_rootCapRaw) {
+                int idI = -1; for (int gi = 0; gi < (int)sh.Calpha.size() && idI < 0; gi++) { bool id = true; for (int x = 0; x < N && id; x++) if (sh.Calpha[gi][x] != x) id = false; if (id) idI = gi; }
+                for (size_t i = 0; i < uniq.size(); i++) { std::vector<int> stab; if (idI >= 0) stab.push_back(idI); reps.push_back(Task{ uniq[i], std::move(stab) }); }
+                std::fill(seen.begin(), seen.end(), (char)1);
+            }
+            // [CORBIT THREADS] The greedy rule -- walk uniq in order, keep each task not yet seen, mark its
+            // whole C(alpha)-orbit seen -- run in speculative batches: the next unseen tasks (up to 4 per
+            // thread) have their orbits computed in parallel, then are merged IN ORDER, a task marked by an
+            // earlier member of the same batch being dropped exactly as the sequential walk would drop it.
+            // Same reps, same order, same stabilizers; a dropped member's work is the only waste.
+            struct OrbRes { std::vector<int> stab; std::vector<uint32_t> hits; };
+            auto orbitOf = [&](size_t i, OrbRes& out) {
+                out.stab.clear(); out.hits.clear();
+                // gamma commutes with alpha, so gamma(orbit) = { gamma(member) }: the image's key is the
+                // least gamma-image of the orbit's members, computed once per rep here.
+                std::vector<Match> mem; mem.push_back(uniq[i]);
+                for (const auto& g : sh.gElems) mem.push_back(applyAlpha(uniq[i], g.data()));
+                const Match keyI = orbitMinKey(uniq[i], sh.gElems);
                 for (int gi = 0; gi < (int)sh.Calpha.size(); gi++) {
-                    std::string img = orbitKey(applyAlpha(uniq[i], sh.Calpha[gi].data()), sh.gElems);
-                    if (img == uniqKey[i]) stab.push_back(gi);     // gamma fixes the orbit
-                    auto it = orbIdx.find(img);
-                    if (it != orbIdx.end()) seen[it->second] = 1;  // mark this C(alpha)-orbit member
+                    const uint8_t* gp = sh.Calpha[gi].data();
+                    Match img = applyAlpha(mem[0], gp);
+                    for (size_t j = 1; j < mem.size(); j++) { Match r = applyAlpha(mem[j], gp); if (r < img) img = r; }
+                    if (img == keyI) { out.stab.push_back(gi); continue; }   // gamma fixes the orbit
+                    const long long j = orbTbl.find(img);
+                    if (j >= 0) out.hits.push_back((uint32_t)j);              // a C(alpha)-orbit member
                 }
-                reps.push_back(Task{ uniq[i], std::move(stab) });
+            };
+            const int nT = nThreads > 0 ? nThreads : 1;
+            std::vector<size_t> batch; std::vector<OrbRes> res;
+            size_t scan = 0;
+            for (;;) {
+                batch.clear();
+                while (scan < uniq.size() && batch.size() < (size_t)(4 * nT)) { if (!seen[scan]) batch.push_back(scan); scan++; }
+                if (batch.empty()) break;
+                res.assign(batch.size(), OrbRes{});
+                if (batch.size() == 1 || nT == 1) { for (size_t k = 0; k < batch.size(); k++) orbitOf(batch[k], res[k]); }
+                else {
+                    std::atomic<size_t> nk{ 0 }; std::vector<std::thread> tp;
+                    for (int t = 0; t < nT; t++) tp.emplace_back([&]() { for (;;) { size_t k = nk.fetch_add(1); if (k >= batch.size()) break; orbitOf(batch[k], res[k]); } });
+                    for (auto& th : tp) th.join();
+                }
+                for (size_t k = 0; k < batch.size(); k++) {   // merge in order: exactly the sequential greedy
+                    const size_t i = batch[k];
+                    if (seen[i]) continue;
+                    seen[i] = 1;
+                    for (uint32_t j : res[k].hits) seen[j] = 1;
+                    reps.push_back(Task{ uniq[i], std::move(res[k].stab) });
+                }
             }
             setupTick("C-orbit reps", (long long)reps.size());
             // [BLOCK THREADING] With REP_RANGE the slice is run through the shared work queue
@@ -3465,13 +3602,12 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             // calls that setup uses. Also built for REP_LEVEL > 1, whose level-L frontier is
             // expanded by splitNode on this path too.
             // Without either, none of this is built and nothing changes.
-            // (k18 refuses REP_RANGE at startup; the REP_LEVEL > 1 count is reachable. Kept identical anyway.)
             if (rangeMode || shardLevel > 1) {
-                if (isE9 || isS3) {
+                if (isBlk) {
                     buildGeneratorsBlocks(gshapes[typeIdx].cls, sh.rootCgens);   // block-wreath generators
                     bool okG = true;   // paranoia: generators must commute with the whole group
                     for (const auto& g : sh.rootCgens) { for (const auto& e : sh.gElems) if (composePerm(g, e) != composePerm(e, g)) { okG = false; break; } if (!okG) break; }
-                    if (!okG) { if (m_bPrint) { printf("[K18-REP]  type %-14s SKIPPED: INTERNAL centralizer generator does not commute -- report this\n", tstr); fflush(stdout); } continue; }
+                    if (!okG) { if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s SKIPPED: INTERNAL centralizer generator does not commute -- report this\n", tstr); fflush(stdout); } continue; }
                 } else
                 buildGenerators(sh.alpha, sh.rootCgens);
                 sh.rootBSGS = cgt::buildBSGS<N>(sh.rootCgens);
@@ -3479,7 +3615,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             }
         } else {
             if (isV4) {   // cannot happen (V4 |C| << cap); the CGT fallback below is cyclic-only
-                if (m_bPrint) { printf("[K18-REP]  type %-14s SKIPPED: V4 centralizer over cap (unsupported path)\n", tstr); fflush(stdout); }
+                if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s SKIPPED: V4 centralizer over cap (unsupported path)\n", tstr); fflush(stdout); }
                 continue;
             }
             // C(alpha) too large to enumerate (sparse types, AND every order-2 type, whose fixed
@@ -3487,222 +3623,34 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             // first-orbit task, compute Schreier generators of its setwise stabilizer in C(alpha)
             // via a candidate-restricted BFS. These flow into coverGen so the over-cap subtrees get
             // the same per-level orbit dedup the enumerable types get from explicit elements.
-            if (isE9 || isS3) {
+            if (isBlk) {
                 buildGeneratorsBlocks(gshapes[typeIdx].cls, sh.rootCgens);   // block-wreath generators (e.g. fixed-point-heavy shapes)
                 bool okG = true;   // paranoia: generators must commute with the whole group
                 for (const auto& g : sh.rootCgens) { for (const auto& e : sh.gElems) if (composePerm(g, e) != composePerm(e, g)) { okG = false; break; } if (!okG) break; }
-                if (!okG) { if (m_bPrint) { printf("[K18-REP]  type %-14s SKIPPED: INTERNAL centralizer generator does not commute -- report this\n", tstr); fflush(stdout); } continue; }
+                if (!okG) { if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s SKIPPED: INTERNAL centralizer generator does not commute -- report this\n", tstr); fflush(stdout); } continue; }
             } else
             buildGenerators(sh.alpha, sh.rootCgens);              // seed for exact Stab_C(P) in coverGen
             sh.rootBSGS = cgt::buildBSGS<N>(sh.rootCgens);        // built once per type, reused per node
-            if (const char* rcf = std::getenv("REP_REPSCHECK")) {   // [DEBUG] read dumped rep covers; verify canonV_fast is C(sigma0)-invariant on each
-                FILE* fp = fopen(rcf, "r");
-                if (!fp) { printf("[REPSCHECK] cannot open %s\n", rcf); fflush(stdout); return; }
-                std::vector<std::vector<Match>> covers; std::vector<Match> cur; char ln[1024];
-                while (fgets(ln, sizeof(ln), fp)) {
-                    if (ln[0] == '#') { if (!cur.empty()) { covers.push_back(cur); cur.clear(); } continue; }
-                    int vals[64], nv = 0; char* q = ln;
-                    while (*q && nv < 64) { while (*q && !(*q >= '0' && *q <= '9')) q++; if (!*q) break; vals[nv++] = atoi(q); while (*q >= '0' && *q <= '9') q++; }
-                    if (nv != N) continue;
-                    Match F; for (int i = 0; i < N; i++) F[i] = (uint8_t)i;
-                    for (int k = 0; k + 1 < nv; k += 2) { F[vals[k]] = (uint8_t)vals[k + 1]; F[vals[k + 1]] = (uint8_t)vals[k]; }
-                    cur.push_back(F);
-                }
-                if (!cur.empty()) covers.push_back(cur);
-                fclose(fp);
-                std::set<std::string> keys; long long checked = 0, fail = 0;
-                for (auto& cov : covers) {
-                    uint8_t k0[NEDGES]; canonV_fast(cov, sh.alpha, k0);
-                    keys.insert(std::string((const char*)k0, NEDGES));
-                    for (const auto& g : sh.rootCgens) {
-                        std::vector<Match> img(cov.size());
-                        for (size_t i = 0; i < cov.size(); i++) img[i] = applyAlpha(cov[i], g.data());
-                        uint8_t kg[NEDGES]; canonV_fast(img, sh.alpha, kg);
-                        checked++; if (memcmp(kg, k0, NEDGES) != 0) fail++;
-                    }
-                }
-                printf("[REPSCHECK] %zu covers | distinct canonV_fast keys=%zu (should == #covers) | invariance checks=%lld FAIL=%lld (should be 0)\n",
-                       covers.size(), keys.size(), checked, fail); fflush(stdout);
-                return;
-            }
             std::vector<Perm> hgens = cgt::edgeStabGens<N>(sh.rootCgens, 0, 1);  // collectTasks forces the anchor edge (0,1)
             setupTick("BSGS+edgeStab", (long long)sh.rootCgens.size());
             std::vector<int> repIdx; std::vector<std::vector<Perm>> stabs;
-            schreierDedup(uniq, uniqKey, orbIdx, hgens, sh.gElems, repIdx, stabs);
+            // schreierDedup keeps the string keys (orbitKey); built here, on the over-cap path only.
+            std::vector<Match> uniqV(uniq.size()); for (size_t i = 0; i < uniq.size(); i++) uniqV[i] = uniq[i];   // schreierDedup takes a vector
+            std::unordered_map<std::string, int> orbIdxS; std::vector<std::string> uniqKeyS; uniqKeyS.reserve(uniq.size());
+            for (size_t i = 0; i < uniq.size(); i++) { uniqKeyS.push_back(orbitKey(uniq[i], sh.gElems)); orbIdxS.emplace(uniqKeyS.back(), (int)i); }
+            schreierDedup(uniqV, uniqKeyS, orbIdxS, hgens, sh.gElems, repIdx, stabs);
             setupTick("schreierDedup", (long long)repIdx.size());
             for (size_t r = 0; r < repIdx.size(); r++)
                 reps.push_back(Task{ uniq[repIdx[r]], {}, std::move(stabs[r]) });
         }
 
-        // 3. fan the representative tasks out across kThreads workers; each subtree breaks
-        //    symmetry with only its orbit's stabilizer.
-        size_t before = gcanon.size();   // classes known before this type
-        const long long dupBefore = g_crossDup.load(std::memory_order_relaxed);   // duplicates before this type
-        { std::lock_guard<std::mutex> lk(g_harvest_mtx); g_savedAut.clear(); g_crossDupAut.clear(); }   // per-leg |Aut| histograms: what this leg wrote, and what it rejected
-        auto ts = std::chrono::steady_clock::now();
-        g_legT0 = ts; g_legNodes0 = g_nodes.load(std::memory_order_relaxed); g_legDup0 = g_crossDup.load(std::memory_order_relaxed);   // the ~ row counts the open leg too
-        // (no per-type start line: a type prints one line, when it finishes)
-        // [PATHCOORD] REP_PATHCOORD=<file>: compute the target's hierarchical block coordinate a.b.c
-        // DETERMINISTICALLY (no scan, no backtracking). LEVEL 1: find the seed rep a and the C(sigma0)
-        // element phi mapping rep[a] onto the target's first orbit (coverMatchesTargetPhi); h=phi^-1 rotates
-        // the target into the search frame so its first orbit == rep[a]. LEVELS 2+: the anchor edge is FORCED
-        // (lowest uncovered), so the rotated target's factor covering it is the exact orbit -- find its index
-        // in the raw reps child list by orbitKey (linear in #children, NOT the old O(children*match) scan +
-        // backtrack that blew up for low-symmetry targets). PL-invariant (raw reps order). Then skip cover.
-        if (const char* pcf = std::getenv("REP_PATHCOORD")) {
-            LocTarget T; T.nfac = 0; for (int a = 0; a < N; a++) for (int b = 0; b < N; b++) T.edgeFac[a][b] = 0;
-            std::vector<Match> tfac;                     // target factors (matchings)
-            FILE* fp = fopen(pcf, "r");
-            if (!fp) { if (m_bPrint) { printf("[PATHCOORD] cannot open %s\n", pcf); fflush(stdout); } continue; }
-            char line[1024];
-            while (fgets(line, sizeof(line), fp)) {
-                int vals[64], nv = 0; char* q = line;
-                while (*q && nv < 64) { while (*q && !(*q >= '0' && *q <= '9')) q++; if (!*q) break; vals[nv++] = atoi(q); while (*q >= '0' && *q <= '9') q++; }
-                if (nv != N) continue;
-                int fi = T.nfac++;
-                Match F; for (int u = 0; u < N; u++) F[u] = 0xFF;
-                for (int k = 0; k + 1 < nv; k += 2) { int a = vals[k], b = vals[k + 1]; T.edgeFac[a][b] |= (1u << fi); T.edgeFac[b][a] |= (1u << fi); F[a] = (uint8_t)b; F[b] = (uint8_t)a; }
-                tfac.push_back(F);
-            }
-            fclose(fp);
-            const bool pcdiag = std::getenv("REP_PATHCOORDDIAG") != nullptr;
-            // REP_PATHCOORDCANON: emit the CANONIZED a.b.c = the minimum a.b.c over the C(sigma0) orbit
-            // (labeling-independent class identity), instead of the raw labeling-specific coordinate.
-            // Levels 2+ minimize the child index over the node-stabilizer orbit (greedy lex-min via the
-            // schreier transporter). Level 1 (seed rep a) is already C(sigma0)-canonical.
-            const bool pccanon = std::getenv("REP_PATHCOORDCANON") != nullptr;
-            // GUARD: the target MUST be in a sigma0-invariant labeling (sigma0 an automorphism = it permutes
-            // the factors). Raw canonical-frame output is NOT -- relabel it first (see P47_std via buildRhoStd).
-            { int s0 = 0; for (const Match& t : tfac) { Match ts = applyAlpha(t, sh.alpha); for (const Match& t2 : tfac) if (ts == t2) { s0++; break; } }
-              if (s0 != (int)tfac.size()) { if (m_bPrint) { printf("[PATHCOORD] target %s is NOT sigma0-invariant (%d/%zu factors) -- relabel to the sigma0 frame first (buildRhoStd). Skipping.\n", pcf, s0, tfac.size()); fflush(stdout); } continue; } }
-            if (m_bPrint) { printf("[PATHCOORD] target %s: %d factors (sigma0-invariant) -> deterministic descent to depth %d ...\n", pcf, T.nfac, shardLevel); fflush(stdout); }
-            if (pccanon) {
-                // CANONIZED coordinate: replace the target labeling with its UNIQUE C(sigma0)-canonical
-                // labeling (canonV_fast minimal image) BEFORE descending. All sigma0-labelings of the class
-                // map to the same canonical labeling, so the resulting a.b.c is a labeling-INDEPENDENT class
-                // identity. Reuses the raw descent below (no per-level stabilizer needed).
-                uint8_t cser[NEDGES]; uint8_t cinv[N];
-                canonV_fast(tfac, sh.alpha, cser, cinv);
-                Perm rho = buildRhoStd(sh.alpha);
-                Perm bi; for (int x = 0; x < N; x++) bi[x] = cinv[x];
-                Perm Cp = composePerm(invPerm(bi), rho);   // canonical relabel = invPerm(inv) o rho
-                for (auto& F : tfac) F = applyAlpha(F, Cp.data());
-                for (int a = 0; a < N; a++) for (int b = 0; b < N; b++) T.edgeFac[a][b] = 0;
-                for (int fi = 0; fi < (int)tfac.size(); fi++) { const Match& F = tfac[fi]; for (int u = 0; u < N; u++) { int v = F[u]; if (u < v) { T.edgeFac[u][v] |= (1u << fi); T.edgeFac[v][u] |= (1u << fi); } } }
-                if (m_bPrint) { printf("[PATHCOORD] canonicalized target via canonV_fast (labeling-independent)\n"); fflush(stdout); }
-            }
-            RepWorker dw; dw.sh = &sh; dw.clearState();
-            std::vector<int> coord; bool ok = true;
-            std::vector<Match> tf;                        // target rotated into the search frame (first orbit == rep[a])
-            {   // LEVEL 1: seed rep a + rotation h=phi^-1
-                int a = -1, phi[N];
-                for (size_t j = 0; j < reps.size(); j++) {
-                    std::vector<Match> orbit;
-                    if (!dw.buildAndValidateOrbit(reps[j].m0, orbit)) continue;
-                    if (coverMatchesTargetPhi(orbit, T, phi)) { a = (int)j; break; }
-                }
-                if (a < 0) { if (m_bPrint) { printf("[PATHCOORD] NOT FOUND (no seed rep matches the target's first orbit)\n"); fflush(stdout); } continue; }
-                Perm phiP; for (int i = 0; i < N; i++) phiP[i] = (uint8_t)phi[i];
-                if (pcdiag) { int good = 0; for (int i = 0; i < N; i++) if (phiP[sh.alpha[i]] == sh.alpha[phiP[i]]) good++; printf("[PATHCOORD-DIAG] phi in C(sigma0)? %d/%d vertices commute\n", good, N); fflush(stdout); }
-                Perm h = invPerm(phiP);
-                tf.resize(tfac.size());
-                for (size_t i = 0; i < tfac.size(); i++) tf[i] = applyAlpha(tfac[i], h.data());
-                std::vector<Match> orb; dw.buildAndValidateOrbit(reps[a].m0, orb); dw.commitOrbit(orb);
-                coord.push_back(a);
-                if (pcdiag) {
-                    int inTf = 0; for (const Match& c : dw.chosen) { for (const Match& t : tf) if (c == t) { inTf++; break; } }
-                    int s0inv = 0; for (const Match& t : tf) { Match ts = applyAlpha(t, sh.alpha); for (const Match& t2 : tf) if (ts == t2) { s0inv++; break; } }
-                    int repInTf = 0; for (const Match& r : orb) { for (const Match& t : tf) if (r == t) { repInTf++; break; } }
-                    printf("[PATHCOORD-DIAG] level 1: seed rep a=%d, committed=%zu in-tf=%d | tf sigma0-invariant factors=%d/%zu | rep[a] orbit in-tf=%d/%zu\n", a, dw.chosen.size(), inTf, s0inv, tf.size(), repInTf, orb.size()); fflush(stdout);
-                }
-            }
-            for (int L = 1; L < shardLevel && ok; L++) {   // LEVELS 2..shardLevel: anchor-forced exact lookup
-                int u0, v0; dw.pickAnchor(u0, v0);
-                if (u0 < 0) { ok = false; if (pcdiag) { printf("[PATHCOORD-DIAG] level %d: FAIL no anchor (u0<0)\n", L + 1); fflush(stdout); } break; }
-                int fi = -1; for (size_t i = 0; i < tf.size(); i++) if (tf[i][u0] == (uint8_t)v0) { fi = (int)i; break; }
-                if (fi < 0) { ok = false; if (pcdiag) { printf("[PATHCOORD-DIAG] level %d: FAIL no target factor covers anchor {%d,%d}\n", L + 1, u0, v0); fflush(stdout); } break; }
-                std::string targKey = orbitKey(tf[fi], sh.gElems);
-                std::vector<std::vector<Match>> kids; std::vector<char> kt; size_t base = dw.chosen.size();
-                dw.splitNode(true, kids, kt);
-                int idx = -1;
-                for (size_t j = 0; j < kids.size(); j++) if (orbitKey(kids[j][base], sh.gElems) == targKey) { idx = (int)j; break; }
-                if (idx < 0) { ok = false;
-                    if (pcdiag) {
-                        int inTf = 0; for (const Match& c : dw.chosen) { for (const Match& t : tf) if (c == t) { inTf++; break; } }
-                        int hamOk = 0; for (const Match& c : dw.chosen) if (is_perfect(tf[fi], c)) hamOk++;
-                        printf("[PATHCOORD-DIAG] level %d: FAIL orbit(anchor {%d,%d}, tf-factor %d) not among %zu children | committed=%zu, of which in-tf=%d, ham-compat-with-tf[fi]=%d\n",
-                               L + 1, u0, v0, fi, kids.size(), dw.chosen.size(), inTf, hamOk); fflush(stdout);
-                    }
-                    break; }
-                std::vector<Match> newOrbit(kids[idx].begin() + base, kids[idx].end());
-                dw.commitOrbit(newOrbit); coord.push_back(idx);
-                if (pcdiag) { int inTf = 0; for (const Match& c : dw.chosen) { for (const Match& t : tf) if (c == t) { inTf++; break; } } bool tfIn = false; for (const Match& t : tf) if (t == tf[fi]) { tfIn = true; break; } printf("[PATHCOORD-DIAG] level %d: anchor {%d,%d}, %zu children, idx=%d | committed=%zu in-tf=%d (targ tf[fi] valid=%d)\n", L + 1, u0, v0, kids.size(), idx, dw.chosen.size(), inTf, (int)tfIn); fflush(stdout); }
-            }
-            if (ok && (int)coord.size() == shardLevel) {
-                std::string s; for (size_t i = 0; i < coord.size(); i++) { if (i) s += "."; s += std::to_string(coord[i]); }
-                if (m_bPrint) { printf("[PATHCOORD]%s FOUND a.b.c = %s\n", pccanon ? " CANON" : "", s.c_str()); fflush(stdout); }
-            } else if (m_bPrint) { printf("[PATHCOORD] NOT FOUND / inconsistent at level %zu\n", coord.size()); fflush(stdout); }
-            continue;
-        }
-        // [CANONCOUNT] REP_CANONCOUNT=<file>: read sigma0-invariant covers (factor rows, blank line between
-        // covers), run canonV_fast on each, report #covers and #distinct canonical keys. Used to verify the
-        // 3-row t9 starter file collapses to the same canonV_fast count as the (0,0)-column enumeration.
-        if (const char* ccf = std::getenv("REP_CANONCOUNT")) {
-            FILE* fp = fopen(ccf, "r");
-            if (!fp) { if (m_bPrint) { printf("[CANONCOUNT] cannot open %s\n", ccf); fflush(stdout); } continue; }
-            std::set<std::string> keys; std::vector<Match> cur; long long ncov = 0; char line[1024];
-            auto flush = [&]() { if (!cur.empty()) { uint8_t key[NEDGES]; canonV_fast(cur, sh.alpha, key); keys.insert(std::string((const char*)key, NEDGES)); ncov++; cur.clear(); } };
-            while (fgets(line, sizeof(line), fp)) {
-                int vals[64], nv = 0; char* q = line;
-                while (*q && nv < 64) { while (*q && !(*q >= '0' && *q <= '9')) q++; if (!*q) break; vals[nv++] = atoi(q); while (*q >= '0' && *q <= '9') q++; }
-                if (nv == N) { Match F; for (int u = 0; u < N; u++) F[u] = 0xFF; for (int k = 0; k + 1 < nv; k += 2) { int a = vals[k], b = vals[k + 1]; F[a] = (uint8_t)b; F[b] = (uint8_t)a; } cur.push_back(F); }
-                else flush();
-            }
-            flush(); fclose(fp);
-            if (m_bPrint) { printf("[CANONCOUNT] %s: %lld covers -> %zu distinct canonV_fast keys\n", ccf, ncov, keys.size()); fflush(stdout); }
-            continue;
-        }
-        // [F2COUNT] REP_F2COUNT: fix a=a0 (F1 only), enumerate the level-2 F2 orbits at anchor {0,2}, and
-        // count the DISTINCT canonV_fast (F1,F2) prefixes. This is the "is b=0 WLOG?" test: if the canonical
-        // count is 1, every second factor is C(sigma0)-equivalent (a=0-style transversal, pin b=0 loses
-        // nothing); if >1, the a=a0 sweep must cover each distinct b. Mirrors the F3COUNT loop one level up.
-        if (std::getenv("REP_F2COUNT")) {
-            RepWorker dw; dw.sh = &sh; dw.clearState();
-            if (reps.empty()) { if (m_bPrint) { printf("[F2COUNT] no level-1 reps\n"); fflush(stdout); } continue; }
-            const int a0 = std::getenv("REP_F3A") ? atoi(std::getenv("REP_F3A")) : 0;
-            if (a0 < 0 || a0 >= (int)reps.size()) { if (m_bPrint) { printf("[F2COUNT] REP_F3A=%d out of range (reps=%zu)\n", a0, reps.size()); fflush(stdout); } continue; }
-            { std::vector<Match> orb; if (!dw.buildAndValidateOrbit(reps[a0].m0, orb)) { if (m_bPrint) { printf("[F2COUNT] a=%d build fail\n", a0); fflush(stdout); } continue; } dw.commitOrbit(orb); }   // commit F1 = a=a0
-            std::vector<Match> creps; std::vector<std::string> ckeys; std::unordered_map<std::string, int> ckeyIdx; std::vector<Perm> hgens; int u0 = -1, v0 = -1;
-            if (!dw.childReps(creps, ckeys, ckeyIdx, hgens, u0, v0)) { if (m_bPrint) { printf("[F2COUNT] a=%d no F2 anchor\n", a0); fflush(stdout); } continue; }
-            const long long f2max = std::getenv("REP_F2MAX") ? atoll(std::getenv("REP_F2MAX")) : -1;   // optional cap (probe)
-            // REP_F2FIXED: restrict to sigma0-FIXED second factors (orbit size 1). The coverage test:
-            // if the sigma0-fixed completions of F1 form ONE canonV_fast class, then every a=4 class's 8
-            // non-F1 sigma0-fixed factors lie in b=0's orbit => b=0 captures every a=4 class => the
-            // b=0-per-column census is COMPLETE for a=4.
-            const bool f2fixed = std::getenv("REP_F2FIXED") != nullptr;
-            std::set<std::string> canonKeys; size_t base2 = dw.chosen.size(); size_t seen = 0, nfixed = 0;
-            for (size_t i = 0; i < creps.size(); i++) {
-                if (f2max >= 0 && (long long)i >= f2max) break;
-                std::vector<Match> orb; if (!dw.buildAndValidateOrbit(creps[i], orb)) continue;
-                if (f2fixed && orb.size() > 1) continue;   // skip sigma0-paired F2, keep only sigma0-fixed (orbit size 1)
-                if (orb.size() == 1) nfixed++;
-                dw.commitOrbit(orb);
-                uint8_t key[NEDGES]; canonV_fast(dw.chosen, sh.alpha, key, nullptr);
-                canonKeys.insert(std::string((const char*)key, NEDGES));
-                dw.rollbackTo(base2); seen++;
-                if (m_bPrint && i && (i % 20000 == 0)) { printf("[F2COUNT] a=%d %zu/%zu, distinct (F1,F2) canon so far=%zu (fixed-F2 seen=%zu)\n", a0, i, creps.size(), canonKeys.size(), nfixed); fflush(stdout); }
-            }
-            if (m_bPrint) { printf("[F2COUNT]%s a=%d F2 anchor {%d,%d}: raw F2 orbits=%zu (processed %zu, sigma0-fixed=%zu), CANONICAL (F1,F2) prefixes (canonV_fast distinct)=%zu => %s\n",
-                f2fixed ? " [FIXED-ONLY]" : "", a0, u0, v0, creps.size(), seen, nfixed, canonKeys.size(),
-                canonKeys.size() == 1 ? (f2fixed ? "single sigma0-fixed orbit => b=0 COVERS a=4 (census complete)" : "b=0 is WLOG (single orbit)")
-                                      : (f2fixed ? "MULTIPLE sigma0-fixed orbits => coverage NOT established" : "b=0 NOT WLOG (multiple b)")); fflush(stdout); }
-            continue;
-        }
-
-        // [F3COUNT] REP_F3COUNT: fix a=0 (sigma0) and b=0 (canonical Hamiltonian F2), then count the level-3
-        // F3 factors: RAW (orbitKey-deduped) and CANONICAL (further deduped by the C(sigma0) setwise-stabilizer
-        // of the fixed (sigma0,F2) prefix = the residual symmetry). The canonical count = # distinct level-3
-        // blocks under (0,0) = the real 1-D search size for the t9 aut=2 census.
+        // [F3COUNT] REP_F3COUNT: the counting pass of the block driver, ported from k18a2rep.cpp.
+        // Fix a = REP_F3A (default 0, the first level-1 rep) and b = 0 (the first level-2 child),
+        // then enumerate the level-3 factor orbits: RAW (orbitKey-deduped, what childReps returns)
+        // and CANONICAL (further deduped by canonV_fast on the whole committed prefix, which is the
+        // real 1-D search size of a block-driven census).  Counting only -- nothing is completed and
+        // no result is written, so this cannot perturb the ordinary legs."Order of
+        // work" step 1: read the block count first, and only then decide whether to port completion.
         if (std::getenv("REP_F3COUNT")) {
             RepWorker dw; dw.sh = &sh; dw.clearState();
             if (reps.empty()) { if (m_bPrint) { printf("[F3COUNT] no level-1 reps\n"); fflush(stdout); } continue; }
@@ -3763,23 +3711,13 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 const size_t QCAP = 200000; nq.push_back({ pc, (char)0 });
                 std::vector<RepWorker> nw((size_t)nThreads); std::vector<std::thread> npool;
                 if (g_precalc) {
-                    // [PRECALC] Same idea as the K20 order-3 triple lists, at order 2 where an
-                    // orbit is {F, sigmaF} -- or one factor when sigma fixes it. Build the list of
-                    // orbits admissible at this block's prefix once, then walk the block by
-                    // FILTERING it instead of regenerating candidates with genM at every node.
-                    // The list code is orbit-size generic already: nrows comes from the orbit, so
-                    // the same builder yields doubles here and triples on K20. Confirmed against
-                    // the closed form at K14 order 2, where it builds exactly 2^6*6!/2 = 23,040.
-                    //
-                    // Branches are taken in sequence, as on the k20 plain path: no queue, no cap,
-                    // no work handed back.
-                    //
-                    // NOTE the prototype covers trivial-stabilizer nodes only, so it needs
-                    // REP_PRUNELEVEL=1 -- which t8 and t9 already run with, so the per-node dedup
-                    // this path skips is off either way and both walk the same tree. Without that
-                    // flag the trees DIVERGE and the list path is far slower (measured at K14
-                    // order 2: the plain path loses dedup and blows up identically, so it is the
-                    // dedup and not the list).
+                    // [PRECALC] (ported from k18a2rep.cpp, 2026-10-25: without it knA2 walked the K18 t8/t9
+                    // blocks ~13x slower than k18, same tree.) Build the list of orbits admissible at this
+                    // block's prefix once, then walk the block by FILTERING it instead of regenerating
+                    // candidates with genM at every node. Orbit-size generic: doubles at order 2. Covers
+                    // trivial-stabilizer nodes only, so it needs REP_PRUNELEVEL=1 -- which t8 and t9 run
+                    // with, so the per-node dedup this path skips is off either way and both walk the same
+                    // tree. Branches are taken in sequence: no queue, no cap, no work handed back.
                     RepWorker& sw = nw[0]; sw.sh = &sh;
                     sw.clearState(); sw.commitOrbit(pc);
                     OrbTask seedOrb;
@@ -3788,7 +3726,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     std::vector<std::vector<Match>> front; std::vector<char> frontTriv; std::vector<OrbTask> frontOrb;
                     sw.splitNodeL(seedOrb, front, frontTriv, frontOrb);
                     if (m_bPrint) { std::lock_guard<std::mutex> lk(g_print_mtx);
-                        xprintf("[K18-REP]  PRECALC: block list %zu orbits -> %zu branches (%.1fs)\n",
+                        xprintf("[K" KNA2_NS "-REP]  PRECALC: block list %zu orbits -> %zu branches (%.1fs)\n",
                                seedOrb.root->ent.size(), front.size(),
                                std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count());
                         fflush(stdout); }
@@ -3807,6 +3745,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                         });
                     }
                     for (auto& th : npool) th.join();
+                    for (auto& w : nw) if (w.nodes_flush) { g_nodes.fetch_add(w.nodes_flush, std::memory_order_relaxed); w.nodes_flush = 0; }   // [K14 TEST] residual, as below
                     return g_emits.load() - e0;
                 }
                 for (int t = 0; t < nThreads; t++) { nw[t].sh = &sh; npool.emplace_back([&, t]() { RepWorker& w = nw[t];
@@ -3817,7 +3756,6 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                         if (!have) { std::this_thread::yield(); continue; }
                         w.clearState(); w.commitOrbit(task.first);
                         if (g_ovlLevel > 0 && (int)w.chosen.size() >= g_ovlLevel) {   // [DIAG] REP_CANONOVL: record this partial (order-independent canonKey), CAP -- do not expand deeper
-                            if (!partialAllSym(w.chosen)) g_ovlNonSym.fetch_add(1, std::memory_order_relaxed);
                             // [FIX] partial-safe canonizer -- canonKey() indexes f[0..NM-1] and so overruns a
                             // PARTIAL, which is what made REP_CANONKEY segfault. canonV_fast handles partials
                             // (block canonization already uses it on the 5-factor starters).
@@ -3835,6 +3773,14 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                         nact.fetch_sub(1);
                     } }); }
                 for (auto& th : npool) th.join();
+                // [K14 TEST] Settle each worker's residual node count. progressTick only flushes on a
+                // 1024-node boundary, and a whole K14 block is far smaller than that, so without this
+                // every block reports 0 nodes and a search-effort regression would be invisible -- the
+                // cases would still PASS on the class set alone. K18 blocks are millions of nodes and
+                // always cross the boundary, which is why it does not bite there. Settling here also
+                // makes the per-block count exact and independent of thread scheduling, so it can be
+                // asserted rather than merely printed.
+                for (auto& w : nw) if (w.nodes_flush) { g_nodes.fetch_add(w.nodes_flush, std::memory_order_relaxed); w.nodes_flush = 0; }
                 return g_emits.load() - e0;
             };
             auto flushSkips = [&]() {                       // emit the pending run of consecutive skipped (duplicate-starter) blocks, with the # of duplicate results they stand for
@@ -4053,222 +3999,56 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             }
             continue;
         }
-        // [NAVIGATE] REP_NAVIGATE=a.b.c = START block. REP_NAVSTEP=Da.Db.Dc = per-step coordinate increment
-        // (default 0.0.1 = next block). REP_NAVSTEPS=N = number of step positions (default 1). At each of the
-        // N positions the coordinate is navigated by index (PL-independent) and a CHUNK of consecutive blocks
-        // is COMPLETED, advancing to the next step when: REP_NAVMAXBLK blocks done (default 1) OR REP_NAVRES
-        // new results OR (each block) REP_NAVCAP seconds. Then coord += step. Out-of-range positions are
-        // reported SKIPPED and the walk continues. Completion runs on the KThreads work-queue (PL-gated by
-        // REP_PRUNELEVEL). REP_NAVEST=<probes> estimates instead.
-        if (const char* nav = std::getenv("REP_NAVIGATE")) {
-            auto parseCoord = [](const char* s, std::vector<int>& out) { out.clear(); const char* p = s; while (*p) { out.push_back(atoi(p)); while (*p && *p != '.') p++; while (*p == '.') p++; } };
-            std::vector<int> coord; parseCoord(nav, coord);
-            std::vector<int> step; if (const char* sv = std::getenv("REP_NAVSTEP")) parseCoord(sv, step);
-            if (step.empty()) { step.assign(coord.size(), 0); if (!coord.empty()) step.back() = 1; }   // default 0.0.1
-            while (step.size() < coord.size()) step.insert(step.begin(), 0);                            // pad to coord width
-            long long nsteps = std::getenv("REP_NAVSTEPS") ? atoll(std::getenv("REP_NAVSTEPS")) : 1;
-            long long maxblk = std::getenv("REP_NAVMAXBLK") ? atoll(std::getenv("REP_NAVMAXBLK")) : 1;   // blocks per position
-            double navCap = std::getenv("REP_NAVCAP") ? atof(std::getenv("REP_NAVCAP")) : 0.0;           // per-block time cap (s)
-            long long resCap = std::getenv("REP_NAVRES") ? atoll(std::getenv("REP_NAVRES")) : 0;         // new results per position
-            int navEst = std::getenv("REP_NAVEST") ? atoi(std::getenv("REP_NAVEST")) : 0;
-            g_typeIdx = tIdx; snprintf(g_typeStr, sizeof(g_typeStr), "%s", tstr);
-            { size_t L = strlen(g_typeStr); while (L && g_typeStr[L - 1] == ' ') g_typeStr[--L] = '\0'; }   // drop tstr's display-pad
-            { std::string ss; for (size_t i = 0; i < step.size(); i++) { if (i) ss += "."; ss += std::to_string(step[i]); }
-              if (m_bPrint) { printf("[NAVIGATE] start %s, step %s, steps %lld | per-pos: maxblk=%lld navcap=%.0fs res=%lld%s\n", nav, ss.c_str(), nsteps, maxblk, navCap, resCap, navEst > 0 ? " [EST]" : ""); fflush(stdout); } }
-            // complete ONE block (full prefix cover pc) on the KThreads work-queue; per-block cap navCap; returns covers emitted.
-            auto completeBlock = [&](const std::vector<Match>& pc) -> long long {
-                long long e0 = g_emits.load(); g_maxDepth.store(0, std::memory_order_relaxed);   // diagnostic: reset per-block max depth
-                std::deque<std::pair<std::vector<Match>, char>> nq; std::mutex nqmtx; std::atomic<int> nact{ 0 };
-                const size_t QCAP = 200000; nq.push_back({ pc, (char)0 });
-                auto t0 = std::chrono::steady_clock::now();
-                std::vector<RepWorker> nw((size_t)nThreads); std::vector<std::thread> npool;
-                for (int t = 0; t < nThreads; t++) { nw[t].sh = &sh; npool.emplace_back([&, t]() { RepWorker& w = nw[t];
-                    for (;;) {
-                        if (g_stop.load(std::memory_order_relaxed)) break;
-                        if (navCap > 0 && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > navCap) break;
-                        std::pair<std::vector<Match>, char> task; bool have = false;
-                        { std::unique_lock<std::mutex> lk(nqmtx); if (!nq.empty()) { task = std::move(nq.back()); nq.pop_back(); nact.fetch_add(1); have = true; } else if (nact.load() == 0) break; }
-                        if (!have) { std::this_thread::yield(); continue; }
-                        w.clearState(); w.commitOrbit(task.first);
-                        std::vector<std::vector<Match>> kk; std::vector<char> ktk; w.splitNode(task.second != 0, kk, ktk);
-                        bool pushed = false;
-                        { std::unique_lock<std::mutex> lk(nqmtx); if (nq.size() < QCAP) { for (size_t i = 0; i < kk.size(); i++) nq.push_back({ std::move(kk[i]), ktk[i] }); pushed = true; } }
-                        if (!pushed) for (size_t i = 0; i < kk.size(); i++) { w.clearState(); w.commitOrbit(kk[i]); w.coverGen(ktk[i] != 0); }
-                        nact.fetch_sub(1);
-                    } }); }
-                for (auto& th : npool) th.join();
-                return g_emits.load() - e0;
-            };
-            std::vector<int> cur = coord;
-            for (long long s = 0; s < nsteps && !g_stop.load(std::memory_order_relaxed); s++) {
-                std::string cs; for (size_t i = 0; i < cur.size(); i++) { if (i) cs += "."; cs += std::to_string(cur[i]); }
-                std::string pfx; for (size_t i = 0; i + 1 < cur.size(); i++) { if (i) pfx += "."; pfx += std::to_string(cur[i]); }
-                RepWorker dw; dw.sh = &sh; dw.clearState(); bool ok = true;   // navigate cur's prefix (all but last)
-                for (size_t L = 0; L + 1 < cur.size() && ok; L++) {
-                    size_t bs = dw.chosen.size();
-                    if (L == 0) { if (cur[0] < 0 || cur[0] >= (int)reps.size()) { ok = false; break; } std::vector<Match> orb; if (!dw.buildAndValidateOrbit(reps[cur[0]].m0, orb)) { ok = false; break; } dw.commitOrbit(orb); }
-                    else { std::vector<std::vector<Match>> kk; std::vector<char> kt; dw.splitNode(true, kk, kt); if (cur[L] < 0 || cur[L] >= (int)kk.size()) { ok = false; break; } std::vector<Match> no(kk[cur[L]].begin() + bs, kk[cur[L]].end()); dw.commitOrbit(no); }
-                }
-                std::vector<std::vector<Match>> kids; std::vector<char> kt; size_t base = 0;
-                if (ok) { base = dw.chosen.size(); dw.splitNode(true, kids, kt); int c = cur.back(); if (c < 0 || c >= (int)kids.size()) ok = false; }
-                if (!ok) { if (m_bPrint) { printf("[NAVIGATE] block %s SKIPPED (out of range)\n", cs.c_str()); fflush(stdout); } for (size_t i = 0; i < cur.size(); i++) cur[i] += step[i]; continue; }
-                long long chRes = 0, nb = 0;               // chunk: consecutive blocks from cur.back() until maxblk / resCap
-                for (int cc = cur.back(); cc < (int)kids.size() && !g_stop.load(std::memory_order_relaxed); cc++) {
-                    if (maxblk > 0 && nb >= maxblk) break;
-                    if (resCap > 0 && chRes >= resCap) break;
-                    std::vector<Match> no(kids[cc].begin() + base, kids[cc].end()); dw.commitOrbit(no);
-                    std::string bs2 = pfx.empty() ? std::to_string(cc) : (pfx + "." + std::to_string(cc));
-                    if (std::getenv("REP_NAVDUMP") && m_bPrint) {   // dump the block's committed prefix factors (edge pairs)
-                        printf("[NAVIGATE-DUMP] block %s prefix (%zu factors):\n", bs2.c_str(), dw.chosen.size());
-                        for (const auto& F : dw.chosen) { for (int u = 0; u < N; u++) if (u < (int)F[u]) printf("%d %d  ", u, (int)F[u]); printf("\n"); }
-                        fflush(stdout);
-                    }
-                    if (navEst > 0) {
-                        std::vector<Match> pc = dw.chosen; RepWorker pw; pw.sh = &sh; std::mt19937 rng((unsigned)(1234567u + (unsigned)cc));
-                        double tot = 0, mx = 0; for (int i = 0; i < navEst; i++) { pw.clearState(); pw.commitOrbit(pc); double e = pw.probeCoverGen(rng); tot += e; if (e > mx) mx = e; }
-                        if (m_bPrint) { printf("[NAVIGATE-EST] block %s: ~%.3g PL=0 cover-nodes (mean %d probes; max %.3g)\n", bs2.c_str(), tot / navEst, navEst, mx); fflush(stdout); }
-                    } else {
-                        if (m_bPrint) { printf("[NAVIGATE] block %s: completing (%d threads, PL=%s)...\n", bs2.c_str(), nThreads, g_pruneMaxFactors > 0 ? "1" : "0"); fflush(stdout); }
-                        long long em = completeBlock(dw.chosen); chRes += em;
-                        if (m_bPrint) { std::string h; { std::lock_guard<std::mutex> lk(g_harvest_mtx); for (auto& kv : g_autHist) { char t[24]; snprintf(t, sizeof(t), "%s%d:%d", h.empty() ? "" : " ", kv.first, kv.second); h += t; } }
-                            printf("[NAVIGATE] block %s done: covers emitted=%lld, maxlvl=%d/%d, cumulative aut{%s}\n", bs2.c_str(), em, g_maxDepth.load(), NM, h.c_str()); fflush(stdout); }
-                    }
-                    dw.rollbackTo(base); nb++;
-                }
-                for (size_t i = 0; i < cur.size(); i++) cur[i] += step[i];   // STEP the coordinate
-            }
-            continue;
-        }
-        // [COMPLETEPREFIX] REP_COMPLETEPREFIX=<file>: complete EXPLICIT sigma0-frame prefixes (not an a.b.c).
-        // The file holds one-or-more records; each record = a "|Aut| header" line followed by factor rows
-        // (each row = 9 space-separated edge pairs = one matching). The record's factors are committed as the
-        // prefix and completed on the KThreads work-queue (mirror of NAVIGATE completeBlock).
-        // Used to drive the re-framed a=4 (k=9) starter list. REP_CPCAP=<sec> per-record cap.
-        if (const char* cpf = std::getenv("REP_COMPLETEPREFIX")) {
-            g_typeIdx = tIdx; snprintf(g_typeStr, sizeof(g_typeStr), "%s", tstr);
-            { size_t L = strlen(g_typeStr); while (L && g_typeStr[L - 1] == ' ') g_typeStr[--L] = '\0'; }
-            double cpCap = std::getenv("REP_CPCAP") ? atof(std::getenv("REP_CPCAP")) : 0.0;
-            int nrec = 0;   // current starter index (declared before completeBlock so its monitor thread can name it)
-            std::set<long long> cset; std::mutex cmtx; size_t lastDistinctC = 0; long long lastStartC = 0, lastLastC = 0;   // distinct c-ranks of the current starter -- LOCAL to this branch, no globals
-            auto completeBlock = [&](const std::vector<Match>& pc) -> long long {
-                long long e0 = g_emits.load(); g_maxDepth.store(0, std::memory_order_relaxed);
-                { std::lock_guard<std::mutex> lk(cmtx); cset.clear(); }   // reset distinct-c for this starter
-                std::deque<std::pair<std::vector<Match>, char>> nq; std::mutex nqmtx; std::atomic<int> nact{ 0 };
-                const size_t QCAP = 200000; nq.push_back({ pc, (char)0 });
-                auto t0 = std::chrono::steady_clock::now();
-                std::atomic<bool> mdone{ false };   // periodic distinct-c reporter for THIS starter (local monitor thread; no globals)
-                std::thread mon([&]() {
-                    auto m0 = std::chrono::steady_clock::now(); auto last = m0;
-                    while (!mdone.load(std::memory_order_relaxed)) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                        auto now = std::chrono::steady_clock::now();
-                        if (std::chrono::duration<double>(now - last).count() < 300.0) continue;
-                        last = now; size_t n; long long cs = 0, ce = 0; { std::lock_guard<std::mutex> lk(cmtx); n = cset.size(); if (n) { cs = *cset.begin(); ce = *cset.rbegin(); } }
-                        if (m_bPrint) { printf("    [rep] COMPLETEPREFIX rec %d elapsed=%.0fs startC=%lld lastC=%lld distinctC=%zu results=%lld\n", nrec, std::chrono::duration<double>(now - m0).count(), cIdx(cs), cIdx(ce), n, g_emits.load() - e0); fflush(stdout); }
-                    }
-                });
-                std::vector<RepWorker> nw((size_t)nThreads); std::vector<std::thread> npool;
-                for (int t = 0; t < nThreads; t++) { nw[t].sh = &sh; nw[t].cSet = &cset; nw[t].cMtx = &cmtx; npool.emplace_back([&, t]() { RepWorker& w = nw[t];
-                    for (;;) {
-                        if (g_stop.load(std::memory_order_relaxed)) break;
-                        if (cpCap > 0 && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > cpCap) break;
-                        std::pair<std::vector<Match>, char> task; bool have = false;
-                        { std::unique_lock<std::mutex> lk(nqmtx); if (!nq.empty()) { task = std::move(nq.back()); nq.pop_back(); nact.fetch_add(1); have = true; } else if (nact.load() == 0) break; }
-                        if (!have) { std::this_thread::yield(); continue; }
-                        w.clearState(); w.commitOrbit(task.first);
-                        if (g_ovlLevel > 0 && (int)w.chosen.size() >= g_ovlLevel) {   // [DIAG] REP_CANONOVL (COMPLETEPREFIX path): record partial, cap (no expand)
-                            if (!partialAllSym(w.chosen)) g_ovlNonSym.fetch_add(1, std::memory_order_relaxed);
-                            // [FIX] partial-safe canonizer -- canonKey() indexes f[0..NM-1] and so overruns a
-                            // PARTIAL, which is what made REP_CANONKEY segfault. canonV_fast handles partials
-                            // (block canonization already uses it on the 5-factor starters).
-                            int sz = (int)w.chosen.size(); std::string ck;
-                            if (g_ovlKey) { uint8_t k4[NEDGES]; canonV_fast(w.chosen, sh.alpha, k4); ck.assign((const char*)k4, NEDGES); }
-                            { std::lock_guard<std::mutex> lk(g_ovlMtx); g_ovlTot[sz]++; if (g_ovlKey) g_ovlSet[sz].insert(std::move(ck)); }
-                            nact.fetch_sub(1); continue;
-                        }
-                        std::vector<std::vector<Match>> kk; std::vector<char> ktk; w.splitNode(task.second != 0, kk, ktk);
-                        bool pushed = false;
-                        { std::unique_lock<std::mutex> lk(nqmtx); if (nq.size() < QCAP) { for (size_t i = 0; i < kk.size(); i++) nq.push_back({ std::move(kk[i]), ktk[i] }); pushed = true; } }
-                        if (!pushed) for (size_t i = 0; i < kk.size(); i++) { w.clearState(); w.commitOrbit(kk[i]); w.coverGen(ktk[i] != 0); }
-                        nact.fetch_sub(1);
-                    } }); }
-                for (auto& th : npool) th.join();
-                mdone.store(true, std::memory_order_relaxed); mon.join();
-                { std::lock_guard<std::mutex> lk(cmtx); lastDistinctC = cset.size(); if (lastDistinctC) { lastStartC = *cset.begin(); lastLastC = *cset.rbegin(); } }
-                return g_emits.load() - e0;
-            };
-            FILE* fp = fopen(cpf, "r");
-            if (!fp) { if (m_bPrint) { printf("[COMPLETEPREFIX] cannot open %s\n", cpf); fflush(stdout); } continue; }
-            char line[1024]; std::vector<Match> pref;
-            auto flushRec = [&]() {
-                if (pref.empty()) return; nrec++;
-                long long em = completeBlock(pref);
-                long long dist = (long long)g_harvest.size();
-                std::string h; { std::lock_guard<std::mutex> lk(g_harvest_mtx); for (auto& kv : g_autHist) { char t[24]; snprintf(t, sizeof(t), "%s%d:%d", h.empty() ? "" : " ", kv.first, kv.second); h += t; } }
-                if (m_bPrint) { printf("[COMPLETEPREFIX] rec %d (%zu factors): results=%lld  maxlvl=%d/%d  startC=%lld lastC=%lld distinctC=%zu  saved=%lld  aut{%s}\n", nrec, pref.size(), em, g_maxDepth.load(), NM, cIdx(lastStartC), cIdx(lastLastC), lastDistinctC, dist, h.c_str()); fflush(stdout); }
-                pref.clear();
-            };
-            while (fgets(line, sizeof(line), fp)) {
-                int vals[64], nv = 0; char* q = line;
-                while (*q && nv < 64) { while (*q && !(*q >= '0' && *q <= '9')) q++; if (!*q) break; vals[nv++] = atoi(q); while (*q >= '0' && *q <= '9') q++; }
-                if (nv == N) { Match F; for (int u = 0; u < N; u++) F[u] = 0xFF; for (int k = 0; k + 1 < nv; k += 2) { F[vals[k]] = (uint8_t)vals[k + 1]; F[vals[k + 1]] = (uint8_t)vals[k]; } pref.push_back(F); }
-                else if (strstr(line, "Aut")) { flushRec(); }   // header line = start of next record
-            }
-            flushRec();
-            fclose(fp);
-            if (m_bPrint) { printf("[COMPLETEPREFIX] DONE: %d prefixes completed, distinct saved=%zu\n", nrec, g_harvest.size()); fflush(stdout); }
-            if (g_ovlLevel > 0 && m_bPrint) {   // [DIAG] REP_CANONOVL report: cross-prefix tree overlap + sigma0-symmetry of completion factors
-                std::lock_guard<std::mutex> lk(g_ovlMtx);
-                printf("[CANONOVL] cross-prefix overlap at size>=%d (across %d prefixes) | partials with a NON-sigma0-symmetric factor = %lld:\n", g_ovlLevel, nrec, g_ovlNonSym.load());
-                std::vector<int> szs; for (auto& kv : g_ovlTot) szs.push_back(kv.first); std::sort(szs.begin(), szs.end());
-                for (int sz : szs) { long long tot = g_ovlTot[sz]; long long dist = (long long)g_ovlSet[sz].size();
-                    printf("    size %2d: total=%lld  distinct=%lld  overlap=%.2fx\n", sz, tot, dist, dist ? (double)tot / dist : 0.0); }
-                fflush(stdout);
-            }
-            continue;
-        }
+
+        // 3. fan the representative tasks out across kThreads workers; each subtree breaks
+        //    symmetry with only its orbit's stabilizer.
+        // [SUBSET] is gone: column set A puts its two facts in the Symmetry and Type columns, and the block driver puts them in the table title
+        size_t before = gcanon.size();   // classes known before this type
+        const long long dupBefore = g_crossDup.load(std::memory_order_relaxed);   // duplicates before this type
+        { std::lock_guard<std::mutex> lk(g_harvest_mtx); g_savedAut.clear(); g_crossDupAut.clear(); }   // per-leg |Aut| histograms: what this leg wrote, and what it rejected
+        auto ts = std::chrono::steady_clock::now();
+        g_legT0 = ts; g_legNodes0 = g_nodes.load(std::memory_order_relaxed); g_legDup0 = g_crossDup.load(std::memory_order_relaxed);   // the ~ row counts the open leg too
+        // (no per-type start line: a type prints one line, when it finishes)
         // [ESTIMATE MODE] Knuth probes instead of the search: per representative run
         // estProbes random descents and report mean estimated subtree node counts.
         // ETA for a real run = (est TOTAL) / (measured nodes/s of a real run).
         if (estProbes > 0) {
-            if (sh.Calpha.empty() && m_bPrint) { printf("[K18-REP]  type %-14s ESTIMATE: over-cap type -- probing the coverGen tree (exact per-node stabilizer dedup)\n", tstr); fflush(stdout); }
-            if (reps.empty()) {   // root-collapsed type: exhausted during collection -> 0 nodes, 0 classes
-                if (m_bPrint) { printf("[K18-REP]  type %-14s ESTIMATE: reps 0 -> est cover-nodes TOTAL ~ 0 (type exhausts at the root)\n", tstr); fflush(stdout); }
+            if (sh.Calpha.empty()) {
+                if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s ESTIMATE SKIPPED: over-cap type (estimator supports the enumerable path only)\n", tstr); fflush(stdout); }
                 continue;
             }
-            // Parallelize over (rep, probe) PAIRS: with only a handful of root reps a
-            // per-rep split leaves every thread but one idle once the small reps finish
-            // (the dense over-cap types have 4-5 reps, one of them dominant).
-            std::vector<double> estVal((size_t)reps.size() * estProbes, 0.0);
-            std::atomic<size_t> nextT{ 0 };
+            if (reps.empty()) {   // root-collapsed type: exhausted during collection -> 0 nodes, 0 classes
+                if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s ESTIMATE: reps 0 -> est cover-nodes TOTAL ~ 0 (type exhausts at the root)\n", tstr); fflush(stdout); }
+                continue;
+            }
+            std::vector<double> estMean(reps.size(), 0.0), estMax(reps.size(), 0.0);
+            std::atomic<size_t> nextR{ 0 };
             std::vector<std::thread> epool;
             for (int t = 0; t < nThreads; t++) epool.emplace_back([&]() {
                 RepWorker w; w.sh = &sh;
                 for (;;) {
-                    size_t idx = nextT.fetch_add(1);
-                    if (idx >= estVal.size()) break;
-                    size_t r = idx / estProbes; int p = (int)(idx % estProbes);
+                    size_t r = nextR.fetch_add(1);
+                    if (r >= reps.size()) break;
                     std::vector<Match> orbit;
                     w.clearState();
                     if (!w.buildAndValidateOrbit(reps[r].m0, orbit)) continue;   // rep contributes 0
-                    w.commitOrbit(orbit);
-                    std::mt19937 rng((unsigned)(1000003u * (unsigned)r + 7919u * (unsigned)p + 12345u));
-                    estVal[idx] = sh.Calpha.empty() ? w.probeCoverGen(rng) : w.probeCover(reps[r].stab, rng);
+                    double sum = 0, mx = 0;
+                    for (int p = 0; p < estProbes; p++) {
+                        w.clearState(); w.commitOrbit(orbit);
+                        std::mt19937 rng((unsigned)(1000003u * (unsigned)r + 7919u * (unsigned)p + 12345u));
+                        double e = w.probeCover(reps[r].stab, rng);
+                        sum += e; if (e > mx) mx = e;
+                    }
+                    estMean[r] = sum / estProbes; estMax[r] = mx;
                 }
             });
             for (auto& th : epool) th.join();
-            std::vector<double> estMean(reps.size(), 0.0), estMax(reps.size(), 0.0);
-            for (size_t r = 0; r < reps.size(); r++) {
-                double s = 0, mx = 0;
-                for (int p = 0; p < estProbes; p++) { double e = estVal[r * estProbes + p]; s += e; if (e > mx) mx = e; }
-                estMean[r] = s / estProbes; estMax[r] = mx;
-            }
             double total = 0, worstMean = 0; size_t worstR = 0;
             for (size_t r = 0; r < reps.size(); r++) { total += estMean[r]; if (estMean[r] > worstMean) { worstMean = estMean[r]; worstR = r; } }
             if (m_bPrint) {
-                printf("[K18-REP]  type %-14s ESTIMATE: reps %zu, probes/rep %d -> est cover-nodes TOTAL ~ %.3g (largest rep #%zu ~ %.3g mean, %.3g max-probe)\n",
+                printf("[K" KNA2_NS "-REP]  type %-14s ESTIMATE: reps %zu, probes/rep %d -> est cover-nodes TOTAL ~ %.3g (largest rep #%zu ~ %.3g mean, %.3g max-probe)\n",
                        tstr, reps.size(), estProbes, total, worstR, worstMean, estMax[worstR]);
-                printf("[K18-REP]  type %-14s ESTIMATE: ETA = above TOTAL / (nodes-per-second of a real run on the same machine/threads)\n", tstr);
+                printf("[K" KNA2_NS "-REP]  type %-14s ESTIMATE: ETA = above TOTAL / (nodes-per-second of a real run on the same machine/threads)\n", tstr);
                 // PER-REP, because on the enumerable path a rep IS a block (REP_RANGE=r:r+1),
                 // and a census is scheduled from the block-size DISTRIBUTION, not the total:
                 // it says how uneven the work is, which blocks are cheap enough to finish
@@ -4276,9 +4056,9 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 // spread WITHIN a rep -- if it towers over the mean, raise the probe count
                 // before believing that row.
                 const double meanAll = reps.empty() ? 0.0 : total / (double)reps.size();
-                printf("[K18-REP]  type %-14s ESTIMATE per block: idx  est-nodes  xMean  max-probe\n", tstr);
+                printf("[K" KNA2_NS "-REP]  type %-14s ESTIMATE per block: idx  est-nodes  xMean  max-probe\n", tstr);
                 for (size_t r = 0; r < reps.size(); r++)
-                    printf("[K18-REP]    block %3zu  %10.3g  %6.2fx  %10.3g\n",
+                    printf("[K" KNA2_NS "-REP]    block %3zu  %10.3g  %6.2fx  %10.3g\n",
                            r, estMean[r], meanAll > 0 ? estMean[r] / meanAll : 0.0, estMax[r]);
                 fflush(stdout);
             }
@@ -4287,7 +4067,6 @@ void K18A2::runRepresentativeMethod(int order, int target) {
         // publish current-type progress state for the periodic [rep] line
         g_typeIdx = tIdx; g_reps_done.store(0); g_reps_total.store(0);
         snprintf(g_typeStr, sizeof(g_typeStr), "%s", tstr);
-        { size_t L = strlen(g_typeStr); while (L && g_typeStr[L - 1] == ' ') g_typeStr[--L] = '\0'; }   // drop tstr's display-pad
         std::vector<RepWorker> workers((size_t)nThreads);
         std::vector<std::thread> pool;
         // Worker-shared state. MUST outlive the threads (joined after the if/else below), so it is
@@ -4310,14 +4089,16 @@ void K18A2::runRepresentativeMethod(int order, int target) {
         std::vector<long long> brNodes;                   // SAMPLE: nodes charged to each sampled branch (under qmtx)
         std::vector<int> brOpen;                          // SAMPLE: tasks outstanding per sampled branch (under qmtx)
         std::vector<char> brCapped;                       // SAMPLE: branch abandoned at the cap (under qmtx)
+        bool sampleFlat = false; size_t sampleFlatBlocks = 0, sampleFlatStride = 1; long long sampleFlatNodes0 = 0;   // SAMPLE on the per-block fan-out
+        std::chrono::steady_clock::time_point sampleFlatT0;
         std::deque<int> qBranch;                          // SAMPLE: lockstep with `queue` in the enumerable pool -- branch of each item (-1 = untracked)
         std::deque<OrbTask> qOrb;                       // PRECALC: lockstep with `queue` in the enumerable pool -- the item's list (root null until the seed builds it)
         if (sh.Calpha.empty() && diveMode && shardLevel == 0) {   // pure fast search (no sweep); with REP_LEVEL the sweep's runBlock dives per block
             // [FAST SEARCH] parallel random dives: up to diveTarget dives across all threads, each ->
             // emit if it reaches a complete cover; the global canonKey dedups. Stops at diveTarget dives
             // or when a harvest target sets g_stop. No .restart needed -- a re-run just keeps diving.
-            if (reps.empty()) { if (m_bPrint) { printf("[K18-REP]  type %-14s FAST SEARCH: no root reps -> 0\n", tstr); fflush(stdout); } continue; }
-            if (m_bPrint) { printf("[K18-REP]  type %-14s FAST SEARCH (backtracking dives, budget %lld nodes/restart) x %d threads -> run until target/kill...\n", tstr, diveBudget, nThreads); fflush(stdout); }
+            if (reps.empty()) { if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s FAST SEARCH: no root reps -> 0\n", tstr); fflush(stdout); } continue; }
+            if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s FAST SEARCH (backtracking dives, budget %lld nodes/restart) x %d threads -> run until target/kill...\n", tstr, diveBudget, nThreads); fflush(stdout); }
             g_reps_total.store(0); g_reps_done.store(0);
             for (int t = 0; t < nThreads; t++) {
                 workers[t].sh = &sh;
@@ -4362,7 +4143,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 // per-chunk state -- declared BEFORE runBlock so its worker threads can check the caps
                 // MID-BLOCK (stop the block the instant a cap is hit, then advance the chunk).
                 std::chrono::steady_clock::time_point ct0;
-                long long banked0 = 0, results0 = 0, rej0 = 0;   // per-band baselines: saved / total covers / rejected
+                long long banked0 = 0;
                 std::atomic<bool> chunkHalt{ false };          // set the moment a cap is hit -> stops the block early
                 const char* chunkWhy = "range-done";
                 auto runBlock = [&](const std::vector<Match>& cover, char triv) {   // process one block's subtree on all threads
@@ -4412,7 +4193,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     long long cs = (long long)rangeStart + curChunk * chunkStep, ce = cs + chunkStep;
                     if (ce > (long long)rangeEnd) ce = (long long)rangeEnd;
                     double csec = std::chrono::duration<double>(std::chrono::steady_clock::now() - ct0).count();
-                    if (m_bPrint) { printf("[K18-REP]  type %-14s BLOCKS [%lld, %lld): +%lld new, %lld results, %lld duplicates, %lld blocks, %.0fs %s\n", tstr, cs, ce, (long long)g_banked.load() - banked0, g_emits.load() - results0, g_dupCovers.load() - rej0, chunkBlocks, csec, chunkWhy); fflush(stdout); }
+                    if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s CHUNK [%lld, %lld): +%lld classes, %lld blocks, %.0fs %s\n", tstr, cs, ce, (long long)g_banked.load() - banked0, chunkBlocks, csec, chunkWhy); fflush(stdout); }
                 };
                 RepWorker dw; dw.sh = &sh;                     // single worker for the enumeration DFS
                 std::function<void(const std::vector<Match>&, bool, int)> dfs =
@@ -4422,21 +4203,13 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                         long long i = visited++;
                         if (i < (long long)rangeStart) return;
                         if (i >= (long long)rangeEnd) { doneAll = true; return; }
-                        if (!g_locTargets.empty()) {           // LOCATE MODE: match cover vs target(s) up to C(sigma0); skip runBlock
-                            for (size_t s = 0; s < g_locTargets.size(); s++) {
-                                if (coverMatchesTarget(cover, g_locTargets[s])) {
-                                    printf("[LOCATE] target #%zu FOUND at block i=%lld  (cover=%zu factors)\n", s + 1, i, cover.size()); fflush(stdout);
-                                    doneAll = true; return;
-                                }
-                            }
-                            if ((i % 200000) == 0) { printf("[LOCATE] scanned to block %lld ...\n", i); fflush(stdout); }
-                            return;                            // not a match -> keep enumerating, skip runBlock
-                        }
                         long long ch = (i - (long long)rangeStart) / chunkStep;
-                        if (ch != curChunk) { closeChunk(); curChunk = ch; ct0 = std::chrono::steady_clock::now(); banked0 = (long long)g_banked.load(); results0 = g_emits.load(); rej0 = g_dupCovers.load(); chunkBlocks = 0; chunkHalt.store(false); chunkWhy = "range-done"; }
+                        if (ch != curChunk) { closeChunk(); curChunk = ch; ct0 = std::chrono::steady_clock::now(); banked0 = (long long)g_banked.load(); chunkBlocks = 0; chunkHalt.store(false); chunkWhy = "range-done"; }
                         if (!chunkHalt.load(std::memory_order_relaxed)) {   // each systematic block runs to its END (no mid-block cut)
                             long long estB0 = g_banked.load(); g_blockCovers.store(0);   // per-block estimate counters
+                            { char bb[32]; snprintf(bb, sizeof(bb), "L%d.%lld", shardLevel, i); g_curBlock = bb; }   // label this block in the progress line
                             runBlock(cover, triv ? 1 : 0);
+                            g_curBlock.clear();
                             chunkBlocks++;
                             if (g_estFile && !diveMode)   // FULLY-scanned block: log "<blockIndex> <rawCovers> <newDistinct>"
                                 { fprintf(g_estFile, "%lld %lld %lld\n", i, g_blockCovers.load(), (long long)g_banked.load() - estB0); fflush(g_estFile); }
@@ -4454,18 +4227,18 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     std::vector<std::vector<Match>> kids; std::vector<char> kt; dw.splitNode(triv, kids, kt);
                     for (size_t k = 0; k < kids.size() && !doneAll; k++) dfs(kids[k], kt[k] != 0, depth + 1);
                 };
-                if (m_bPrint) { printf("[K18-REP]  type %-14s BLOCK SWEEP [%zu, %zu) step %lld, advance-when: %.0fs | %lld new | %lld blocks (0=off), engine: %s%s -> run...\n", tstr, rangeStart, rangeEnd, chunkStep, chunkTimeout, chunkResultCap, chunkMaxBlocks, diveMode ? "fast dives" : "systematic", g_target > 0 ? ", LOOP to target" : ""); fflush(stdout); }
+                if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s CHUNKED SWEEP [%zu, %zu) step %lld, caps: %.0fs/chunk, %lld results/chunk, %lld blocks/chunk, engine: %s%s -> run...\n", tstr, rangeStart, rangeEnd, chunkStep, chunkTimeout, chunkResultCap, chunkMaxBlocks, diveMode ? "fast dives" : "systematic", g_target > 0 ? ", LOOP to target" : ""); fflush(stdout); }
                 // ONE pass over the range; if a harvest target is set (REP_ORDER=order:N) LOOP the range,
                 // re-diving with fresh randomness each pass (global canonKey dedups), until the target is
                 // banked or the run is killed. No target -> a single pass (density map).
                 if (!diveMode && std::getenv("REP_ESTFILE")) {   // per-block estimate log (fresh per run; step in the name)
                     char epath[256]; snprintf(epath, sizeof(epath), "k%d_%d_step%lld_estimate.txt", N, tIdx, chunkStep);
                     g_estFile = fopen(epath, "w");
-                    if (m_bPrint) { printf("[K18-REP]  type %-14s ESTIMATE LOG -> %s (%s)\n", tstr, epath, g_estFile ? "fresh" : "OPEN FAILED"); fflush(stdout); }
+                    if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s ESTIMATE LOG -> %s (%s)\n", tstr, epath, g_estFile ? "fresh" : "OPEN FAILED"); fflush(stdout); }
                 }
                 int sweepPass = 0;
                 do {
-                    if (m_bPrint && ++sweepPass > 1) { printf("[K18-REP]  type %-14s SWEEP PASS %d (cum %zu distinct) -> re-dive the range...\n", tstr, sweepPass, g_harvest.size()); fflush(stdout); }
+                    if (m_bPrint && ++sweepPass > 1) { printf("[K" KNA2_NS "-REP]  type %-14s SWEEP PASS %d (cum %zu distinct) -> re-dive the range...\n", tstr, sweepPass, g_harvest.size()); fflush(stdout); }
                     visited = 0; curChunk = -1; doneAll = false; chunkBlocks = 0; chunkHalt.store(false); chunkWhy = "range-done";
                     { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { if (doneAll) break; std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) dfs(orb, rawShard, 1); } }   // rawShard -> trivial descent (skip per-node group dedup)
                     closeChunk();                              // final chunk of this pass
@@ -4476,40 +4249,12 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 long long visited = 0;                        // running index of level-L branches (DFS order)
                 bool doneRange = false;
                 RepWorker dw; dw.sh = &sh;                     // one reusable worker (re-committed at every node)
-                // [PATHCANON streaming] canonicalize each block's path inline (no storage) so the range can be
-                // huge: dedup canonV_fast keys into `pcSet`, print the running distinct count every 100k blocks.
-                const bool pcStream = std::getenv("REP_PATHCANON") != nullptr;
-                std::map<std::string, long long> pcRep; long long pcSeen = 0;   // canonical starter -> FIRST (representative) block index
-                std::set<long long> classBlocks;              // REP_CLASSBLOCKS: log's +class block indices to validate
-                long long cbRep = 0, cbDup = 0;               // class-blocks that ARE / are NOT the first occurrence of their starter
-                if (const char* cbf = std::getenv("REP_CLASSBLOCKS")) { FILE* f = fopen(cbf, "r"); if (f) { long long b; while (fscanf(f, "%lld", &b) == 1) classBlocks.insert(b); fclose(f); } }
-                // REP_DUMPREPS=<file>: dump the actual 3-orbit COVER of every representative (first-occurrence) box, so the
-                // completion pass can seed each directly WITHOUT re-streaming/re-walking the tree. Format = the DUMPFIRST
-                // format ("u v u v" per factor line), '#' on its own line separating one representative's cover from the next.
-                FILE* repFile = nullptr; long long repDumped = 0;
-                if (const char* rf = std::getenv("REP_DUMPREPS")) { repFile = fopen(rf, "w"); printf("[PATHCANON] REP_DUMPREPS: representative covers -> %s (%s)\n", rf, repFile ? "open" : "OPEN FAILED"); fflush(stdout); }
                 std::function<void(const std::vector<Match>&, bool, int)> dfs =
                   [&](const std::vector<Match>& cover, bool triv, int depth) {
                     if (doneRange) return;
                     if (depth == shardLevel) {                 // a level-L branch
                         long long i = visited++;
-                        if (i >= (long long)rangeStart && i < (long long)rangeEnd) {
-                            if (pcStream) {
-                                uint8_t mn[NEDGES]; canonV_fast(cover, sh.alpha, mn);
-                                std::string k((const char*)mn, NEDGES);
-                                bool firstOcc = (pcRep.find(k) == pcRep.end());
-                                if (classBlocks.count(i)) {      // validate: is this +class block the first occurrence of its starter?
-                                    if (firstOcc) cbRep++;
-                                    else { cbDup++; if (cbDup <= 12) { printf("[PATHCANON] class-block %lld is a DUP: starter first appeared at block %lld\n", i, pcRep[k]); fflush(stdout); } }
-                                }
-                                if (firstOcc) {
-                                    pcRep[k] = i;                // first occurrence = representative block
-                                    if (repFile) { for (const Match& f : cover) { for (int u = 0; u < N; u++) if (u < f[u]) fprintf(repFile, "%d %d ", u, (int)f[u]); fprintf(repFile, "\n"); } fprintf(repFile, "#\n"); repDumped++; }
-                                }
-                                pcSeen++;
-                                if ((pcSeen % 100000) == 0) { printf("[PATHCANON] seen %lld blocks -> %zu distinct starters (results) | reps saved=%lld (%.1fs)\n", pcSeen, pcRep.size(), repDumped, elapsed()); if (repFile) fflush(repFile); fflush(stdout); }
-                            } else { shardFront.push_back(cover); shardTriv.push_back(triv ? 1 : 0); }
-                        }
+                        if (i >= (long long)rangeStart && i < (long long)rangeEnd) { shardFront.push_back(cover); shardTriv.push_back(triv ? 1 : 0); }
                         if (i + 1 >= (long long)rangeEnd) doneRange = true;   // reached end -> stop the whole DFS
                         return;
                     }
@@ -4518,44 +4263,13 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     for (size_t k = 0; k < kids.size() && !doneRange; k++) dfs(kids[k], kt[k] != 0, depth + 1);
                 };
                 { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { if (doneRange) break; std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) dfs(orb, rawShard, 1); } }   // rawShard -> trivial descent (skip per-node group dedup)
-                if (pcStream) {
-                    long long mx = 0, le2850 = 0, le4299 = 0, gt4299 = 0;
-                    for (auto& pr : pcRep) { long long b = pr.second; if (b > mx) mx = b; if (b <= 2850) le2850++; if (b <= 4299) le4299++; else gt4299++; }
-                    printf("[PATHCANON] FINAL blocks [%zu,%zu) = %lld: distinct starters=%zu | max-rep-block=%lld | rep<=2850=%lld  rep<=4299(swept)=%lld  rep>4299(UNSWEPT)=%lld\n",
-                           rangeStart, rangeEnd, pcSeen, pcRep.size(), mx, le2850, le4299, gt4299); fflush(stdout);
-                    if (!classBlocks.empty()) printf("[PATHCANON] CLASS-BLOCK CHECK: %zu log +class blocks | first-occurrence(representative)=%lld | DUPLICATE(inconsistent)=%lld\n", classBlocks.size(), cbRep, cbDup); fflush(stdout);
-                    if (repFile) { fclose(repFile); printf("[PATHCANON] REP_DUMPREPS: saved %lld representative covers (= distinct starters) to the seed file\n", repDumped); fflush(stdout); }
-                    // dump the UNSWEPT representative blocks (rep > 4299) -- these need completion to prove no new class
-                    FILE* uf = fopen("pathcanon_unswept.txt", "w");
-                    if (uf) { for (auto& pr : pcRep) if (pr.second > 4299) fprintf(uf, "%lld\n", pr.second); fclose(uf); }
-                    shardFront.clear(); shardHi = 0;
-                }
                 shardHi = shardFront.size();                   // shardFront holds exactly the block [start,end)
-                if (m_bPrint) { xprintf("[K18-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
+                if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
                 if (m_bPrint && rangeEnd > rangeStart) { std::string ts(tstr); while (!ts.empty() && ts.back() == ' ') ts.pop_back(); printf("  blocks %zu-%zu, type %s\n", rangeStart, rangeEnd - 1, ts.c_str()); fflush(stdout); }
-                // [PATHCANON] canonicalize each block's PATH with canonV_fast: report how many DISTINCT
-                // C(sigma0)-canonical level-L prefixes the range holds, and how many blocks are SELF-canonical
-                // (their path IS the C(sigma0)-minimum = the canonical representative). Then skip completion.
-                if (std::getenv("REP_PATHCANON")) {
-                    Perm rho = buildRhoStd(sh.alpha);
-                    std::set<std::string> distinct; long long selfc = 0;
-                    for (size_t bi = 0; bi < shardFront.size(); bi++) {
-                        const std::vector<Match>& cov = shardFront[bi]; int NF = (int)cov.size();
-                        int e2f[NEDGES]; for (int e = 0; e < NEDGES; e++) e2f[e] = -1;
-                        for (int f = 0; f < NF; f++) { Match F = applyAlpha(cov[f], rho.data()); for (int u = 0; u < N; u++) { int v = F[u]; if (u < v) e2f[eidT[u][v]] = f; } }
-                        uint8_t own[NEDGES], inv[N]; for (int i = 0; i < N; i++) inv[i] = (uint8_t)i; serVPrefix(e2f, inv, N, own);
-                        uint8_t mn[NEDGES]; canonV_fast(cov, sh.alpha, mn);
-                        if (memcmp(own, mn, NEDGES) == 0) selfc++;
-                        distinct.insert(std::string((const char*)mn, NEDGES));
-                    }
-                    printf("[PATHCANON] blocks [%zu,%zu) = %zu paths: distinct C(sigma0)-canonical=%zu, self-canonical blocks=%lld\n",
-                           rangeStart, rangeEnd, shardFront.size(), distinct.size(), selfc); fflush(stdout);
-                    shardFront.clear(); shardTriv.clear(); shardHi = 0;   // skip the work-queue completion
-                }
             } else {
                 // COUNT the whole level: parallel level-synchronous build, print per-level branch count.
                 { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) { shardFront.push_back(std::move(orb)); shardTriv.push_back(rawShard ? 1 : 0); } } }   // rawShard -> trivial count (skip per-node group dedup)
-                if (m_bPrint) { xprintf("[K18-REP]  type %-14s LEVEL 1 branches %zu (%.1fs)\n", tstr, shardFront.size(), elapsed()); fflush(stdout); }
+                if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s LEVEL 1 branches %zu (%.1fs)\n", tstr, shardFront.size(), elapsed()); fflush(stdout); }
                 for (int lvl = 2; lvl <= shardLevel && !shardFront.empty(); lvl++) {
                     if (lvl == shardLevel) {
                         // FINAL level: COUNT children per parent and SUM -- do NOT store the level, so a
@@ -4569,7 +4283,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                             for (;;) { size_t i = pi.fetch_add(1); if (i >= shardFront.size()) break; std::vector<std::vector<Match>> kids; std::vector<char> kt; w.clearState(); w.commitOrbit(shardFront[i]); w.splitNode(shardTriv[i] != 0, kids, kt); cnt.fetch_add((long long)kids.size(), std::memory_order_relaxed); }
                         });
                         for (auto& th : bp) th.join();
-                        if (m_bPrint) { xprintf("[K18-REP]  type %-14s LEVEL %d branches %lld (%.1fs, counted -- not stored)\n", tstr, lvl, cnt.load(), elapsed()); fflush(stdout); }
+                        if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s LEVEL %d branches %lld (%.1fs, counted -- not stored)\n", tstr, lvl, cnt.load(), elapsed()); fflush(stdout); }
                         break;
                     }
                     // intermediate level: build and store (parents for the next level)
@@ -4591,7 +4305,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     std::vector<std::vector<Match>> nf; std::vector<char> nt;
                     for (size_t i = 0; i < pf.size(); i++) for (size_t k = 0; k < pf[i].size(); k++) { nf.push_back(std::move(pf[i][k])); nt.push_back(pt[i][k]); }
                     shardFront.swap(nf); shardTriv.swap(nt);
-                    if (m_bPrint) { xprintf("[K18-REP]  type %-14s LEVEL %d branches %zu (%.1fs%s)\n", tstr, lvl, shardFront.size(), elapsed(), par ? ", parallel" : ""); fflush(stdout); }
+                    if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s LEVEL %d branches %zu (%.1fs%s)\n", tstr, lvl, shardFront.size(), elapsed(), par ? ", parallel" : ""); fflush(stdout); }
                 }
                 shardHi = 0;                                  // count only -> process nothing (the LEVEL lines are the counts)
             }
@@ -4673,9 +4387,6 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             // C(alpha) is small enough to enumerate -- K20 3^6.1^2, |C| = 1,049,760 -- and a
             // COUNT request has to be honoured here as well, not only in the over-cap branches
             // above, or it runs as an unbounded sweep instead.
-            // (On k18 REP_RANGE exits at startup -- the block driver supersedes it -- so only the
-            // REP_LEVEL count below is reachable here. The code is kept identical across the four
-            // engines on purpose.)
             //
             // The root reps ARE the level-1 partition of this path: collectTasks forces the anchor
             // edge and the C(alpha)-orbit collapse above keeps one representative per orbit, so they
@@ -4694,7 +4405,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
             size_t lo = 0, hi = reps.size();
             const bool deepShard = (shardLevel > 1);
             if (shardLevel > 0 && m_bPrint) {
-                xprintf("[K18-REP]  type %-14s LEVEL 1 branches %zu (root reps -- the partition on the enumerable path; the SETUP lines above are where the time went)\n", tstr, reps.size());
+                xprintf("[K" KNA2_NS "-REP]  type %-14s LEVEL 1 branches %zu (root reps -- the partition on the enumerable path; the SETUP lines above are where the time went)\n", tstr, reps.size());
                 fflush(stdout);
             }
             if (deepShard) {
@@ -4720,8 +4431,8 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     };
                     { RepWorker seed; seed.sh = &sh; for (auto& tk : reps) { if (doneRange) break; std::vector<Match> orb; if (seed.buildAndValidateOrbit(tk.m0, orb)) dfs(orb, rawShard, 1); } }   // rawShard -> trivial descent (skip per-node group dedup)
                     shardHi = shardFront.size();              // shardFront holds exactly the block [start,end)
-                    if (chunkStep > 0 && m_bPrint) printf("[K18-REP]  type %-14s REP_RANGE chunked form ignored here -- the slice runs PLAINLY, every branch to completion\n", tstr);
-                    if (m_bPrint) { xprintf("[K18-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
+                    if (chunkStep > 0 && m_bPrint) printf("[K" KNA2_NS "-REP]  type %-14s REP_RANGE chunked form ignored here -- the slice runs PLAINLY, every branch to completion\n", tstr);
+                    if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s SHARD level %d: built range [%zu, %zu) = %zu branches (%.1fs) -> run (work-queue, all threads)...\n", tstr, shardLevel, rangeStart, rangeEnd, shardFront.size(), elapsed()); fflush(stdout); }
                     if (m_bPrint && rangeEnd > rangeStart) { std::string ts(tstr); while (!ts.empty() && ts.back() == ' ') ts.pop_back(); printf("  blocks %zu-%zu, type %s\n", rangeStart, rangeEnd - 1, ts.c_str()); fflush(stdout); }
                 } else {
                     // COUNT the whole level: parallel level-synchronous build, print per-level branch count.
@@ -4739,7 +4450,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                                 for (;;) { size_t i = pi.fetch_add(1); if (i >= shardFront.size()) break; std::vector<std::vector<Match>> kids; std::vector<char> kt; w.clearState(); w.commitOrbit(shardFront[i]); w.splitNode(shardTriv[i] != 0, kids, kt); cnt.fetch_add((long long)kids.size(), std::memory_order_relaxed); }
                             });
                             for (auto& th : bp) th.join();
-                            if (m_bPrint) { xprintf("[K18-REP]  type %-14s LEVEL %d branches %lld (%.1fs, counted -- not stored)\n", tstr, lvl, cnt.load(), elapsed()); fflush(stdout); }
+                            if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s LEVEL %d branches %lld (%.1fs, counted -- not stored)\n", tstr, lvl, cnt.load(), elapsed()); fflush(stdout); }
                             break;
                         }
                         // intermediate level: build and store (parents for the next level)
@@ -4761,21 +4472,21 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                         std::vector<std::vector<Match>> nf; std::vector<char> nt;
                         for (size_t i = 0; i < pf.size(); i++) for (size_t k = 0; k < pf[i].size(); k++) { nf.push_back(std::move(pf[i][k])); nt.push_back(pt[i][k]); }
                         shardFront.swap(nf); shardTriv.swap(nt);
-                        if (m_bPrint) { xprintf("[K18-REP]  type %-14s LEVEL %d branches %zu (%.1fs%s)\n", tstr, lvl, shardFront.size(), elapsed(), par ? ", parallel" : ""); fflush(stdout); }
+                        if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s LEVEL %d branches %zu (%.1fs%s)\n", tstr, lvl, shardFront.size(), elapsed(), par ? ", parallel" : ""); fflush(stdout); }
                     }
                     shardHi = 0;                              // count only -> process nothing (the LEVEL lines are the counts)
-                    if (m_bPrint) { printf("[K18-REP]  type %-14s COUNT only (REP_LEVEL set, REP_RANGE unset) -- nothing searched\n", tstr); fflush(stdout); }
+                    if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s COUNT only (REP_LEVEL set, REP_RANGE unset) -- nothing searched\n", tstr); fflush(stdout); }
                 }
             } else if (rangeMode) {
-                if (chunkStep > 0 && m_bPrint) printf("[K18-REP]  type %-14s REP_RANGE chunked form ignored here -- the slice runs PLAINLY, every branch to completion\n", tstr);
+                if (chunkStep > 0 && m_bPrint) printf("[K" KNA2_NS "-REP]  type %-14s REP_RANGE chunked form ignored here -- the slice runs PLAINLY, every branch to completion\n", tstr);
                 lo = (rangeStart < hi) ? rangeStart : hi;
                 if (rangeEnd < hi) hi = rangeEnd;
                 if (hi < lo) hi = lo;
-                if (m_bPrint) { xprintf("[K18-REP]  type %-14s SHARD range [%zu, %zu) of %zu root reps -> run...\n", tstr, lo, hi, reps.size()); fflush(stdout); }
+                if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s SHARD range [%zu, %zu) of %zu root reps -> run...\n", tstr, lo, hi, reps.size()); fflush(stdout); }
                 if (m_bPrint && hi > lo) { std::string ts(tstr); while (!ts.empty() && ts.back() == ' ') ts.pop_back(); printf("  blocks %zu-%zu of 0-%zu, type %s\n", lo, hi - 1, reps.size() - 1, ts.c_str()); fflush(stdout); }
             } else if (shardLevel > 0) {
                 hi = lo;                                  // COUNT mode: the LEVEL line is the answer; search nothing
-                if (m_bPrint) { printf("[K18-REP]  type %-14s COUNT only (REP_LEVEL set, REP_RANGE unset) -- nothing searched\n", tstr); fflush(stdout); }
+                if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s COUNT only (REP_LEVEL set, REP_RANGE unset) -- nothing searched\n", tstr); fflush(stdout); }
             }
             next.store(lo);
             g_reps_total.store((long long)(hi - lo));
@@ -4802,13 +4513,13 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     }
                 } else { RepWorker seed; seed.sh = &sh; for (size_t i = lo; i < hi; i++) { std::vector<Match> orb; if (seed.buildAndValidateOrbit(reps[i].m0, orb)) { queue.push_back({ std::move(orb), (char)0 }); qBranch.push_back(-1); qOrb.emplace_back(); } } }
                 g_reps_total.store((long long)queue.size());
-                if (m_bPrint) { printf("[K18-REP]  type %-14s BLOCK THREADING: %zu block(s) seeded -> shared work queue, all %d threads\n", tstr, queue.size(), nThreads); fflush(stdout); }
-                if (sampling && m_bPrint) { printf("[K18-REP]  type %-14s SAMPLE: every %lld-th branch of [%zu, %zu) = %zu branches, cap %lld nodes each (0 = none)\n", tstr, sampleStride, rangeStart, rangeStart + shardHi, sampleIdx.size(), sampleCap); fflush(stdout); }
+                if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s BLOCK THREADING: %zu block(s) seeded -> shared work queue, all %d threads\n", tstr, queue.size(), nThreads); fflush(stdout); }
+                if (sampling && m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s SAMPLE: every %lld-th branch of [%zu, %zu) = %zu branches, cap %lld nodes each (0 = none)\n", tstr, sampleStride, rangeStart, rangeStart + shardHi, sampleIdx.size(), sampleCap); fflush(stdout); }
                 auto tPool = std::chrono::steady_clock::now();
                 auto reportBranch = [&](int b) {              // SAMPLE: called under qmtx when a sampled branch has no task left
                     if (!m_bPrint) return;
                     double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - tPool).count();
-                    printf("[K18-REP]  type %-14s SAMPLE branch %zu: %lld nodes %s (%.0fs)\n", tstr, sampleIdx[b], brNodes[b], brCapped[b] ? "CAPPED" : "finished", sec); fflush(stdout);
+                    printf("[K" KNA2_NS "-REP]  type %-14s SAMPLE branch %zu: %lld nodes %s (%.0fs)\n", tstr, sampleIdx[b], brNodes[b], brCapped[b] ? "CAPPED" : "finished", sec); fflush(stdout);
                 };
                 for (int t = 0; t < nThreads; t++) {
                     workers[t].sh = &sh;
@@ -4831,7 +4542,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                                 if (!orb.root) {             // a seed: build its list once; every entry is admissible at the seed
                                     auto tL = std::chrono::steady_clock::now();
                                     orb.root = w.buildOrbList();
-                                    if (m_bPrint) { std::lock_guard<std::mutex> lk(g_print_mtx); xprintf("[K18-REP]  type %-14s PRECALC: seed list %zu orbits (%.1fs)\n", tstr, orb.root->ent.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count()); fflush(stdout); }
+                                    if (m_bPrint) { std::lock_guard<std::mutex> lk(g_print_mtx); xprintf("[K" KNA2_NS "-REP]  type %-14s PRECALC: seed list %zu orbits (%.1fs)\n", tstr, orb.root->ent.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count()); fflush(stdout); }
                                 }
                                 w.splitNodeL(orb, kids, kidsTriv, kidsOrb);
                             } else w.splitNode(task.second != 0, kids, kidsTriv);
@@ -4854,7 +4565,113 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                         }
                     });
                 }
-            } else if (rangeMode && !deepShard && hi > lo) {
+                for (auto& th : pool) th.join();   // here: the workers use this scope's locals (reportBranch, tPool, ...)
+            } else if (std::getenv("REP_SPLIT") && !sh.Calpha.empty() && !rangeMode && !deepShard && sampleStride <= 0) {
+                // [SPLIT] REP_SPLIT=L[:a:b]: cut every root block at level L (L orbits committed; root = 1),
+                // number the level-L branches in DFS order (block 0's first), and walk branches [a, b) --
+                // each thread takes the next branch IN ORDER and runs it whole with the normal cover(), so
+                // the tree and node counts are the unsplit run's. The "~ so far" row's restart column is the
+                // lowest branch not done: continue with REP_SPLIT=L:<it>:b. A branch too long for one run
+                // is cut finer by running just it one level deeper (its level-(L+1) numbers are printed).
+                int L = 2; long long sa = 0, sb = -1;
+                { const char* e = std::getenv("REP_SPLIT"); L = atoi(e); const char* c = strchr(e, ':'); if (c) { sa = atoll(c + 1); c = strchr(c + 1, ':'); if (c) sb = atoll(c + 1); } }
+                if (L < 2) L = 2;
+                auto tH = std::chrono::steady_clock::now();
+                // 1. harvest, parallel over root blocks, regrouped in block order (deterministic numbering)
+                std::vector<std::vector<RepWorker::SplitBranch>> per(reps.size());
+                std::vector<std::vector<long long>> perPar(reps.size());
+                std::vector<long long> nPar(reps.size(), 0);
+                {
+                    std::atomic<size_t> rNext{ 0 };
+                    std::vector<std::thread> hp;
+                    for (int t = 0; t < nThreads; t++) hp.emplace_back([&, t]() {
+                        RepWorker& w = workers[t]; w.sh = &sh; w.splitLevel = L;   // the harvest's nodes and classes count as the leg's
+                        for (;;) {
+                            size_t r = rNext.fetch_add(1); if (r >= reps.size()) break;
+                            w.splitOut = &per[r]; w.splitPar = &perPar[r]; w.splitParents = 0; w.levelNow = 1;
+                            w.runTask(reps[r]);
+                            nPar[r] = w.splitParents;
+                        }
+                        w.splitOut = nullptr; w.splitPar = nullptr;
+                    });
+                    for (auto& th : hp) th.join();
+                }
+                std::vector<RepWorker::SplitBranch> br; std::vector<size_t> brBlock; std::vector<long long> brPar;   // brPar = global level-(L-1) parent (L >= 3)
+                long long parBase = 0;
+                for (size_t r = 0; r < per.size(); r++) {
+                    for (size_t j = 0; j < per[r].size(); j++) { br.push_back(std::move(per[r][j])); brBlock.push_back(r); brPar.push_back(parBase + perPar[r][j]); }
+                    parBase += nPar[r];
+                    std::vector<RepWorker::SplitBranch>().swap(per[r]);
+                }
+                if (sb < 0 || sb > (long long)br.size()) sb = (long long)br.size();
+                if (sa > sb) sa = sb;
+                const size_t a = (size_t)sa, b = (size_t)sb, nB = b - a;
+                if (m_bPrint) {
+                    printf("[K" KNA2_NS "-REP]  type %-14s SPLIT level %d: %zu branches from %zu blocks (%.1fs); walking [%zu, %zu) = %zu\n", tstr, L, br.size(), reps.size(),
+                           std::chrono::duration<double>(std::chrono::steady_clock::now() - tH).count(), a, b, nB);
+                    // the map from level L-1 to level L: which level-L branches a level-(L-1) branch (L = 2: a block) splits into
+                    const size_t nParents = (L == 2) ? reps.size() : (size_t)parBase;
+                    if (nParents <= 2000) {
+                        for (size_t i = 0; i < br.size(); ) {
+                            const long long p = (L == 2) ? (long long)brBlock[i] : brPar[i];
+                            size_t j = i; while (j < br.size() && ((L == 2) ? (long long)brBlock[j] : brPar[j]) == p) j++;
+                            printf("[K" KNA2_NS "-REP]    level %d branch %lld = level %d branches %zu-%zu\n", L - 1, p, L, i, j - 1);
+                            i = j;
+                        }
+                    } else printf("[K" KNA2_NS "-REP]    (%zu level-%d branches: map not printed)\n", nParents, L - 1);
+                    fflush(stdout);
+                }
+                // 2. walk [a, b): next branch in order, whole, normal cover()
+                // [SAMPLE] REP_SPLITSAMPLE=stride:cap walks only branches a, a+stride, ... each capped at
+                // cap nodes, and prints every branch's nodes / time / finished-or-CAPPED (branch-size spread).
+                // REP_SPLITSAMPLE=/K:cap picks the stride for about K branches (the count is unknown before the harvest).
+                long long sStride = 0, sCap = 0;
+                if (const char* es = std::getenv("REP_SPLITSAMPLE")) {
+                    if (es[0] == '/') { const long long K = atoll(es + 1); sStride = K > 0 ? (long long)((nB + (size_t)K - 1) / (size_t)K) : 1; }
+                    else sStride = atoll(es);
+                    if (const char* c = strchr(es, ':')) sCap = atoll(c + 1);
+                }
+                if (sStride < 1) sStride = 1;
+                const bool sampleOn = std::getenv("REP_SPLITSAMPLE") != nullptr;   // print every walked branch's size
+                const size_t nW = (nB + (size_t)sStride - 1) / (size_t)sStride;
+                if (sStride > 1 && m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s SPLIT SAMPLE: every %lld-th branch of [%zu, %zu) = %zu branches, cap %lld nodes each (0 = none)\n", tstr, sStride, a, b, nW, sCap); fflush(stdout); }
+                if (std::getenv("REP_MRVWALK")) g_mrv = true;   // [MRV] harvest the plain way (same numbering), walk with MRV
+                g_reps_total.store((long long)nW); g_reps_done.store(0);
+                std::atomic<size_t> bNext{ 0 };
+                std::vector<char> bDone(nW, 0);
+                size_t bLow = 0;
+                g_blkLow.store((long long)a); g_blkLast.store((long long)b - 1);
+                for (int t = 0; t < nThreads; t++) {
+                    workers[t].sh = &sh;
+                    pool.emplace_back([&, t]() {
+                        RepWorker& w = workers[t];
+                        for (;;) {
+                            if (g_stop.load(std::memory_order_relaxed)) break;
+                            const size_t k = bNext.fetch_add(1);
+                            if (k >= nW) break;
+                            const size_t bi = a + k * (size_t)sStride;
+                            const auto& B = br[bi];
+                            w.clearState(); w.commitOrbit(B.first); w.levelNow = L;
+                            const long long n0 = w.nodes; const auto t0 = std::chrono::steady_clock::now();
+                            if (sCap > 0) w.capAt = n0 + sCap;
+                            w.cover(B.second);
+                            const bool capped = w.capAt && w.nodes > w.capAt; w.capAt = 0;
+                            if (sampleOn && m_bPrint) { std::lock_guard<std::mutex> lk(g_print_mtx); printf("[K" KNA2_NS "-REP]  type %-14s SAMPLE branch %zu (block %zu): %lld nodes %s (%.0fs)\n", tstr, bi, brBlock[bi], w.nodes - n0, capped ? "CAPPED" : "finished", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()); fflush(stdout); }
+                            if (!g_stop.load(std::memory_order_relaxed)) {
+                                std::lock_guard<std::mutex> lk(g_print_mtx);
+                                bDone[k] = 1;
+                                while (bLow < nW && bDone[bLow]) bLow++;
+                                g_blkLow.store((long long)(a + bLow * (size_t)sStride), std::memory_order_relaxed);
+                            }
+                            g_reps_done.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    });
+                }
+                for (auto& th : pool) th.join();   // here: the workers use this scope's locals
+            } else if (rangeMode && !deepShard && hi > lo && (hi - lo) < (size_t)(2 * nThreads) && sampleStride <= 0) {
+                // (Only for a range of FEWER blocks than 2 x threads -- the K20 order-3 arrangement, one
+                // huge block per process. A range of many small blocks -- K22 order 7: 95,974 blocks of
+                // ~500 branches -- left most threads idle here, so it takes the per-block fan-out below.)
                 // [SEQUENTIAL BRANCHES] One block at a time; inside a block every thread takes the
                 // next unclaimed branch and walks it whole. No shared queue, no cap, nothing handed
                 // back: a branch is claimed with one atomic increment and that is the only sharing.
@@ -4890,11 +4707,11 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     if (g_precalc) {
                         auto tL = std::chrono::steady_clock::now();
                         seedOrb.root = seedW.buildOrbList();
-                        if (m_bPrint) { xprintf("[K18-REP]  type %-14s PRECALC: seed list %zu orbits (%.1fs)\n", tstr, seedOrb.root->ent.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count()); fflush(stdout); }
+                        if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s PRECALC: seed list %zu orbits (%.1fs)\n", tstr, seedOrb.root->ent.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - tL).count()); fflush(stdout); }
                         seedW.splitNodeL(seedOrb, front, frontTriv, frontOrb);
                     } else seedW.splitNode(false, front, frontTriv);
                     g_reps_total.store((long long)front.size());
-                    if (m_bPrint) { xprintf("[K18-REP]  type %-14s BLOCK %zu: %zu branches -> %d threads, next branch in sequence\n", tstr, bi, front.size(), nThreads); fflush(stdout); }
+                    if (m_bPrint) { xprintf("[K" KNA2_NS "-REP]  type %-14s BLOCK %zu: %zu branches -> %d threads, next branch in sequence\n", tstr, bi, front.size(), nThreads); fflush(stdout); }
                     std::atomic<size_t> bidx{ 0 };
                     std::vector<std::thread> bpool;
                     for (int t = 0; t < nThreads; t++) {
@@ -4914,22 +4731,85 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                     for (auto& th : bpool) th.join();
                 }
             } else {
+                // Per-block fan-out: each worker claims the next root rep (= block) of [lo, hi) and walks it
+                // whole. [SAMPLE] With REP_SAMPLE=stride (enumerable path, no REP_LEVEL > 1) only blocks
+                // lo, lo+stride, lo+2*stride, ... are walked, and the summary below scales by the stride.
+                const size_t step = (sampleStride > 0) ? (size_t)sampleStride : 1;
+                size_t nTake = (hi > lo) ? (hi - lo + step - 1) / step : 0;
+                if (step > 1) { g_reps_total.store((long long)nTake); if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s SAMPLE: every %zu-th block of [%zu, %zu) = %zu blocks\n", tstr, step, lo, hi, nTake); fflush(stdout); } }
+                // [BLOCKS] REP_BLOCKS=i,j,...: walk ONLY these root blocks (indices into the reps; "first",
+                // "mid", "last" accepted), each on one thread, and print each block's own nodes and seconds.
+                // One setup for any selection, e.g. the first, middle and last block of a leg.
+                std::vector<size_t> pick;
+                if (const char* eb = std::getenv("REP_BLOCKS")) {
+                    for (const char* p = eb; *p; ) {
+                        auto one = [&](const char* s) -> size_t { return !strncmp(s, "first", 5) ? 0 : !strncmp(s, "mid", 3) ? reps.size() / 2 : !strncmp(s, "last", 4) ? (reps.empty() ? 0 : reps.size() - 1) : (size_t)atoll(s); };
+                        size_t v = one(p), v2 = v;
+                        const char* q = p; while (*q && *q != ',' && *q != '-') q++;
+                        if (*q == '-') v2 = one(q + 1);   // [RESUME] "i-j" = blocks i..j inclusive, e.g. "17-last"
+                        for (size_t b = v; b <= v2 && b < reps.size(); b++) pick.push_back(b);
+                        while (*p && *p != ',') p++; while (*p == ',') p++;
+                    }
+                    nTake = pick.size(); g_reps_total.store((long long)nTake);
+                    if (m_bPrint) { printf("[K" KNA2_NS "-REP]  type %-14s BLOCKS: %zu root blocks in this leg; walking %zu of them, one thread each\n", tstr, reps.size(), nTake); fflush(stdout); }
+                }
+                std::atomic<size_t> kNext{ 0 };
+                // [RESUME] On a full walk (no sample, no REP_BLOCKS) track the lowest block not yet done
+                // (blocks are claimed in order, so it is the lowest one in process); the 5-min "~ so far"
+                // row prints it, so a crashed run restarts with REP_BLOCKS=<it>-<last> (+ REP_ONLYTYPES).
+                const bool resumeLog = m_bPrint && pick.empty() && step == 1;
+                std::vector<char> blkDone(resumeLog ? nTake : 0, 0);
+                size_t lowWater = 0;
+                g_blkLow.store(resumeLog ? (long long)lo : -1); g_blkLast.store(resumeLog ? (long long)hi - 1 : -1);
                 for (int t = 0; t < nThreads; t++) {
                     workers[t].sh = &sh;
-                    pool.emplace_back([&, t, hi]() {
+                    pool.emplace_back([&, t]() {
                         RepWorker& w = workers[t];
-                        for (;;) { if (g_stop.load(std::memory_order_relaxed)) break; size_t i = next.fetch_add(1); if (i >= hi) break; w.runTask(reps[i]); g_reps_done.fetch_add(1, std::memory_order_relaxed); }
+                        for (;;) {
+                            if (g_stop.load(std::memory_order_relaxed)) break;
+                            size_t k = kNext.fetch_add(1); if (k >= nTake) break;
+                            const size_t bi = pick.empty() ? lo + k * step : pick[k];
+                            const long long n0 = w.nodes; const auto tb = std::chrono::steady_clock::now();
+                            w.runTask(reps[bi]);
+                            if (!pick.empty() && m_bPrint) {
+                                std::lock_guard<std::mutex> lk(g_print_mtx);
+                                printf("[K" KNA2_NS "-REP]  type %-14s BLOCK %zu of %zu: %lld nodes, %.1fs on one thread\n", tstr, bi, reps.size(), w.nodes - n0,
+                                       std::chrono::duration<double>(std::chrono::steady_clock::now() - tb).count());
+                                fflush(stdout);
+                            }
+                            if (resumeLog && !g_stop.load(std::memory_order_relaxed)) {
+                                std::lock_guard<std::mutex> lk(g_print_mtx);
+                                blkDone[k] = 1;
+                                while (lowWater < nTake && blkDone[lowWater]) lowWater++;
+                                g_blkLow.store((long long)(lo + lowWater), std::memory_order_relaxed);
+                            }
+                            g_reps_done.fetch_add(1, std::memory_order_relaxed);
+                        }
                     });
                 }
+                if (step > 1) {   // flat-sample summary once the pool is joined (below)
+                    sampleFlat = true; sampleFlatBlocks = nTake; sampleFlatStride = step; sampleFlatT0 = std::chrono::steady_clock::now(); sampleFlatNodes0 = g_nodes.load();
+                }
+                // Join HERE: the workers use this scope's locals (kNext, pick, nTake, blkDone, lowWater).
+                for (auto& th : pool) th.join();
             }
         }
-        for (auto& th : pool) th.join();
+        for (auto& th : pool) if (th.joinable()) th.join();
+        g_blkLow.store(-1); g_blkLast.store(-1);
+        if (sampleFlat && m_bPrint) {
+            long long nodesNow = g_nodes.load(); for (auto& w : workers) nodesNow += w.nodes_flush;   // workers' unflushed residue too
+            const long long sn = nodesNow - sampleFlatNodes0;
+            const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - sampleFlatT0).count();
+            printf("[K" KNA2_NS "-REP]  type %-14s SAMPLE: %zu blocks walked, %lld nodes, %.1fs -> whole range ~ %.3g nodes, ~ %.0fs at this rate and thread count\n",
+                   tstr, sampleFlatBlocks, sn, sec, (double)sn * sampleFlatStride, sec * sampleFlatStride);
+            fflush(stdout);
+        }
         if (sampleStride > 0 && !sampleIdx.empty() && m_bPrint) {   // SAMPLE summary: the stride-scaled estimate of the slice
             long long fin = 0, capped = 0, sumFin = 0, sumAll = 0, mx = 0;
             for (size_t b = 0; b < sampleIdx.size(); b++) { sumAll += brNodes[b]; if (brNodes[b] > mx) mx = brNodes[b]; if (brCapped[b]) capped++; else { fin++; sumFin += brNodes[b]; } }
-            printf("[K18-REP]  type %-14s SAMPLE summary: %zu branches, %lld finished, %lld capped; nodes finished %lld (mean %.0f, max %lld), all %lld\n",
+            printf("[K" KNA2_NS "-REP]  type %-14s SAMPLE summary: %zu branches, %lld finished, %lld capped; nodes finished %lld (mean %.0f, max %lld), all %lld\n",
                    tstr, sampleIdx.size(), fin, capped, sumFin, fin ? (double)sumFin / (double)fin : 0.0, mx, sumAll);
-            printf("[K18-REP]  type %-14s SAMPLE estimate of the slice: stride %lld x %lld = %.3e nodes%s\n",
+            printf("[K" KNA2_NS "-REP]  type %-14s SAMPLE estimate of the slice: stride %lld x %lld = %.3e nodes%s\n",
                    tstr, sampleStride, sumAll, (double)sampleStride * (double)sumAll, capped ? " (a LOWER BOUND: capped branches counted at the cap)" : "");
             fflush(stdout);
         }
@@ -4940,7 +4820,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 if (gcanon.insert(kv.first).second) gautOf[kv.first] = kv.second;
 
         if (m_bPrint && diveMode && sh.Calpha.empty()) {
-            printf("[K18-REP]  type %-14s FAST SEARCH: %lld random restarts, %zu new distinct classes (cum %zu)\n",
+            printf("[K" KNA2_NS "-REP]  type %-14s FAST SEARCH: %lld random restarts, %zu new distinct classes (cum %zu)\n",
                    tstr, divesDone.load(), gcanon.size() - before, gcanon.size());
             fflush(stdout);
         }
@@ -4962,7 +4842,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 // from the row above. Nodes and its rate stay this leg's own, which is what the
                 // column name says: they measure how fast THIS subset searched, not the run.
                 std::string sym, typ;
-                subsetCells(order, isV4, isE9, isS3, tstr, sym, typ);
+                subsetCells(order, isV4, isE9, isS3, tstr, sym, typ, isGen ? kGenNames[kOrderGenBase - order] : nullptr);
                 std::map<int, int> savedHist, dupHist;
                 { std::lock_guard<std::mutex> lk(g_harvest_mtx); savedHist = g_runSavedAut; dupHist = g_runDupAut; }
                 std::vector<std::string> cells;
@@ -4973,6 +4853,7 @@ void K18A2::runRepresentativeMethod(int order, int target) {
                 } else {
                     cells.push_back(fmtElapsed(g_runSec));
                     cells.push_back(fmtNodes(typeNodes, tsec));
+                    cells.push_back(""); cells.push_back("");   // blocks / restart: ~ rows only
                     cells.push_back(fmtSavedDup(g_runSaved, g_runDups, savedHist, dupHist));
                 }
                 g_tbl->row(' ', cells);
@@ -4985,83 +4866,45 @@ void K18A2::runRepresentativeMethod(int order, int target) {
     // result pipeline the moment it was first found -- exact global dedup in emit().)
 
     if (m_bPrint) {
-        if (g_diagProbe > 0) {   // [DIAG] REP_DIAGPROBE: where the look-ahead would have fired
-            printf("[DIAGPROBE] depth: nodes probed -> nodes with an unrealizable diagonal\n");
-            for (int d = 0; d <= NM + 1; d++) if (g_diagProbes[d])
-                printf("           %2d: %lld -> %lld (%.1f%%)\n", d, g_diagProbes[d], g_diagHits[d], 100.0 * g_diagHits[d] / g_diagProbes[d]);
-            fflush(stdout);
-        }
+        // No end-of-order summary line: what this run enumerated is stated by the table's title,
+        // the per-leg rows carry each leg's own numbers, and the run totals are the = TOTAL row.
+        // The order-level histogram and DISTINCT-CLASSES line said all three again, in a third
+        // vocabulary: the table is the only content here.
+        // Why a type was skipped stays in the case's ReadMe.md.
         bool harvested = (g_target > 0 && g_stop.load(std::memory_order_relaxed));
-        // g_harvest, not gcanon: gcanon is merged from the TYPE loop's worker pool only, so the
-        // F3COMPLETE block driver (its own worker vector, destroyed per block) never reaches it, so
-        // reading gcanon alone here would report 0.
-        const size_t distinctAll = g_harvest.size() > gcanon.size() ? g_harvest.size() : gcanon.size();
-        // No end-of-order summary line: what this run enumerated is stated by the table's title, the
-        // running tallies are its ~ rows, and the totals are its = row and the closing "p1f.exe:" line
-        // line. Harvest mode still speaks up, because
-        // "stopped at a target" is not the same outcome as "finished".
-        if (harvested)
-            printf("[K18-REP] HARVESTED %zu classes (target %d reached -- NOT proven complete)\n", distinctAll, g_target);
-        if (g_f17dump) {   // [DIAG] REP_F17DUMP final tally: total forced-17th nodes + the full sampled obstruction histogram
+        if (harvested)   // "stopped at a target" is not the same outcome as "finished", so it still speaks up
+            printf("[K" KNA2_NS "-REP] HARVESTED %zu classes (target %d reached -- NOT proven complete)\n", gcanon.size(), g_target);
+        if (g_f17dump) {   // [DIAG] REP_F17DUMP: forced-last-factor obstruction histogram (a{a}:partition; NOCLASH = fertile leaf)
             std::lock_guard<std::mutex> lk(g_f17_mtx);
-            std::string hist; for (auto& kv : g_f17Hist) { char t[48]; snprintf(t, sizeof(t), "%s%s:%lld", hist.empty() ? "" : "  ", kv.first.c_str(), kv.second); hist += t; }
-            std::string ch; for (auto& kv : g_f17ClashHist) { char t[48]; snprintf(t, sizeof(t), "%s%d:%lld", ch.empty() ? "" : " ", kv.first, kv.second); ch += t; }
-            printf("[F17] FINAL: forced-17th nodes reached=%lld (histogram sampled 1/%lld) | obstruction: %s | clash-count: %s\n", g_f17Total.load(), g_f17Sub, hist.c_str(), ch.c_str());
+            std::string hist; for (auto& kv : g_f17Hist) { char t[64]; snprintf(t, sizeof(t), "%s%s:%lld", hist.empty() ? "" : "  ", kv.first.c_str(), kv.second); hist += t; }
+            printf("[F17] FINAL: forced-last nodes reached=%lld (sampled 1/%lld) | obstruction histogram: %s\n", g_f17Total.load(), g_f17Sub, hist.c_str());
         }
         if (g_lvlStats) {   // [DIAG] REP_LEVELSTATS: per-level node counts + branching (reached[m+1]/reached[m]) = success/expansion rate per level
             printf("[LVL] per-level node counts (level = #committed factors) + branching to next level:\n");
             for (int m = 0; m < NM + 1; m++) { long long r = g_lvlReached[m].load(); if (r == 0) continue;
                 long long rn = g_lvlReached[m + 1].load(); double br = r ? (double)rn / (double)r : 0.0;
                 printf("[LVL]   level %2d: reached=%-14lld branching=%.3f%s\n", m, r, br, (m == NM - 1) ? "   <- forced last factor" : ""); }
+            printf("[LVL] genM: %lld calls (partial matchings), %lld leaves (full matchings), %lld leaves with a valid orbit\n", g_genCalls.load(), g_genLeaves.load(), g_genPass.load());
         }
-        if (g_probe1 > 0) {   // [DIAG] REP_PROBE1: how often the pairing invariant already fails
-            long long s = g_probeSeen.load(), b = g_probeBad.load();
-            printf("[PROBE1] level %d: nodes=%lld  violating U==sigma0(R): %lld  (%.2f%%)  -- what a look-ahead here could reject\n",
-                   g_probe1, s, b, s ? 100.0 * (double)b / (double)s : 0.0);
-            fflush(stdout);
-        }
-        if (g_pDump) {   // [DIAG] REP_PDUMP: realized row-pairing involutions
-            std::lock_guard<std::mutex> lk(g_pdump_mtx);
-            long long tot = 0; for (auto& kv : g_pSeen) tot += kv.second;
-            printf("[PDUMP] realized row-pairing involutions: %zu distinct over %lld completions\n", g_pSeen.size(), tot);
-            for (auto& kv : g_pSeen) {
-                // render as fixed points + transposition pairs, which is how the stratum reads it
-                std::string fx, tr; int seen[N] = { 0 };
-                int pv[N]; for (int i = 0; i < N; i++) pv[i] = -1;
-                { int x = 0, v = 0; const char* c = kv.first.c_str();
-                  while (sscanf(c, "%d:%d,", &x, &v) == 2) { if (x > 0 && x < N) pv[x] = v; c = strchr(c, ','); if (!c) break; c++; } }
-                char t[16];
-                for (int x = 1; x < N; x++) { if (pv[x] < 0) continue;
-                    if (pv[x] == x) { snprintf(t, sizeof(t), "%d ", x); fx += t; }
-                    else if (!seen[x]) { seen[x] = seen[pv[x]] = 1; snprintf(t, sizeof(t), "(%d %d)", x, pv[x]); tr += t; } }
-                printf("[PDUMP]   x%-6lld fixed{ %s}  %s\n", kv.second, fx.c_str(), tr.c_str());
-            }
-            fflush(stdout);
-        }
-        if (g_genStat) {   // [DIAG] REP_GENSTAT: how many candidate factors genM built vs kept, per level
-            printf("[GEN] genM candidates built vs kept (level = #committed factors when the candidate was built):\n");
-            long long tm = 0, tk = 0;
-            for (int m = 0; m < NM + 2; m++) {
-                long long made = g_genMade[m].load(), kept = g_genKept[m].load();
-                if (made == 0) continue;
-                tm += made; tk += kept;
-                printf("[GEN]   level %2d: built=%-14lld kept=%-12lld waste=%.1f%%  (built/kept=%.2fx)\n",
-                       m, made, kept, made ? 100.0 * (double)(made - kept) / (double)made : 0.0,
-                       kept ? (double)made / (double)kept : 0.0);
-            }
-            printf("[GEN]   TOTAL  : built=%lld kept=%lld waste=%.1f%%  -- this is the ceiling on what any\n", tm, tk, tm ? 100.0 * (double)(tm - tk) / (double)tm : 0.0);
-            printf("[GEN]            up-front constraint could remove from generation (it cannot save the kept ones).\n");
-        }
-        if (g_patStat) {   // [DIAG] REP_PATSTAT: sigma0 stay/swap pattern occurrence (S=stay, W=swap; commit order)
+        if (g_patStat) {   // [PORT] REP_PATSTAT: stay/swap pattern tallies (completions + forced-last)
             std::lock_guard<std::mutex> lk(g_pat_mtx);
-            printf("[PATSTAT] COMPLETION patterns (full 17-factor P1Fs emitted): %zu distinct\n", g_patEmit.size());
+            printf("[PATSTAT] COMPLETION patterns (full %d-factor P1Fs emitted): %zu distinct\n", NM, g_patEmit.size());
             for (auto& kv : g_patEmit) printf("[PATSTAT]   %s  count=%lld  |Aut|=%d\n", kv.first.c_str(), kv.second.first, kv.second.second / 2);
             long long f17tot = 0; for (auto& kv : g_patF17) f17tot += kv.second;
-            printf("[PATSTAT] FORCED-17th patterns (16-factor near-complete partials reached): %zu distinct, %lld total\n", g_patF17.size(), f17tot);
+            printf("[PATSTAT] FORCED-LAST patterns (%d-factor near-complete): %zu distinct, %lld total\n", NM - 1, g_patF17.size(), f17tot);
             for (auto& kv : g_patF17) printf("[PATSTAT]   %s  count=%lld\n", kv.first.c_str(), kv.second);
-            if (g_patLevel > 0) { long long mtot = 0; for (auto& kv : g_patMid) mtot += kv.second;
-                printf("[PATSTAT] MID-LEVEL(%d) patterns (sampled 1/%lld): %zu distinct, %lld sampled\n", g_patLevel, g_patSub, g_patMid.size(), mtot);
-                for (auto& kv : g_patMid) printf("[PATSTAT]   %s  count=%lld\n", kv.first.c_str(), kv.second); }
+        }
+        if (g_patByClass) {   // [REP_PATBYCLASS] per-result nbr0-indexed pattern report (pos j = factor with 0-neighbour j; pos 1,2,3 = the fixed 3-row starter)
+            std::lock_guard<std::mutex> lk(g_pat_mtx);
+            printf("[PATBYCLASS] %zu distinct results | pattern position j = factor whose 0-neighbour is j (pos 1,2,3 = the 3-row starter factors 0~1,0~2,0~3)\n", g_patClassPats.size());
+            int ci = 0;
+            for (auto& kv : g_patClassPats) {
+                const std::string& ckey = kv.first;
+                long long tot = 0; for (auto& pc : kv.second) tot += pc.second;
+                printf("[PATBYCLASS] result #%d  |Aut|=%d  detections=%lld  distinct-patterns=%zu  first=%s\n", ci, g_patClassAut[ckey] / 2, tot, kv.second.size(), g_patClassFirst[ckey].c_str());
+                for (auto& pc : kv.second) printf("[PATBYCLASS]     %s  count=%lld%s\n", pc.first.c_str(), pc.second, pc.first == g_patClassFirst[ckey] ? "  <- first-seen" : "");
+                ci++;
+            }
         }
         fflush(stdout);
     }

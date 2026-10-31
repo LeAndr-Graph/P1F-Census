@@ -75,24 +75,22 @@
   <ItemGroup>
     <ClCompile Include="source\p1f.cpp" />
     <ClCompile Include="source\knSupport.cpp" />
-    <ClCompile Include="source\k16A2support.cpp" />
-    <ClCompile Include="source\k18a2support.cpp" />
-    <ClCompile Include="source\k14a2.cpp" />
-    <ClCompile Include="source\k14a2rep.cpp" />
-    <ClCompile Include="source\k16A2.cpp" />
-    <ClCompile Include="source\k16A2rep.cpp" />
-    <ClCompile Include="source\k18a2.cpp" />
-    <ClCompile Include="source\k18a2rep.cpp" />
-    <ClCompile Include="source\k20a2.cpp" />
-    <ClCompile Include="source\k20a2rep.cpp" />
+    <ClCompile Include="source\knA2_14.cpp" />
+    <ClCompile Include="source\knA2_16.cpp" />
+    <ClCompile Include="source\knA2_18.cpp" />
+    <ClCompile Include="source\knA2_20.cpp" />
+    <ClCompile Include="source\knA2_22.cpp" />
+    <ClCompile Include="source\knA2_24.cpp" />
+    <ClCompile Include="source\knA2_26.cpp" />
+    <ClCompile Include="source\knA2_28.cpp" />
+    <ClCompile Include="source\knA2_30.cpp" />
+    <ClCompile Include="source\knA2_32.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\cgtEngine.h" />
     <ClInclude Include="include\kBase.h" />
-    <ClInclude Include="include\k14a2.h" />
-    <ClInclude Include="include\k16A2.h" />
-    <ClInclude Include="include\k18a2.h" />
-    <ClInclude Include="include\k20a2.h" />
+    <ClInclude Include="include\knA2.h" />
+    <None Include="source\knA2rep.inl" />
     <ClInclude Include="include\gitVersion.h" />
     <ClInclude Include="include\logTable.h" />
   </ItemGroup>

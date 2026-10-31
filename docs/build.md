@@ -34,7 +34,9 @@ Redistributable* (x64).
 
 Each folder under [`runs/`](../runs/) is one computation: a `run.bat` that sets the environment and
 starts the engine, and a `ReadMe.md` explaining what it searches, what it should find and roughly
-how long it takes. Run one by executing its `run.bat` — nothing else needs configuring.
+how long it takes. Run one by executing its `run.bat` — nothing else needs configuring. The
+notation they share (types, group names such as D8 or A4, shapes) is in
+[`runs/ReadMe.md`](../runs/ReadMe.md).
 
 | Case | What it does |
 |---|---|
@@ -47,6 +49,9 @@ how long it takes. Run one by executing its `run.bat` — nothing else needs con
 | `runs/K20/K20Aut4-All` | the K20 \|Aut\| > 3 classification, by group size |
 | `runs/K20/K20Aut4-NoSkip` | the same result re-derived by search instead of by theorem |
 | `runs/K20/K20Aut3` | the K20 order-3 cell, swept in 104 independent blocks — **complete** (2026-09-21); its 149,606 \|Aut\| = 3 classes are `AllResults/K20_P1F_aut_eq3.txt.gz` |
+| `runs/K22/*` | the K22 \|Aut\| > 6 classification, one case per leg (orders 7, 10, 11, 20, 21, the small groups, S3, V4) |
+| `runs/K24/*` | the K24 \|Aut\| > 3 classification: orders 23 and 11, and S3 |
+| `runs/K26/*` | the K26 classes with an automorphism of type 25 1 or 24 1² |
 
 Runtimes span seconds to days; the K18 \|Aut\| = 2 strata and the K20 order-3 cell are the long
 ones, and both are designed to be split across machines. Read the case's `ReadMe.md` first.
@@ -67,12 +72,13 @@ SET "P1F_EXE=D:\somewhere\P1F-Census\x64\Debug\p1f.exe"
 ## Layout
 
 ```
-source/       the engine: one solver per graph size, plus the driver
+source/       the engine: one solver (knA2rep.inl) compiled once per graph size, plus the driver
 include/      shared headers
 runs/         one folder per computation, grouped by graph
 regression/   fast correctness suite with frozen expected output
-tools/        the check script: a run's results looked up in the catalogue for its N
-docs/         this file, theorems.md, env_variables.txt
+tools/        the check script (a run's results looked up in the catalogue for its N), the
+              catalogue builder, and two standalone checks: p1f_check and atomcat
+docs/         this file, theorems.md, env_variables.md
 AllResults/   the catalogues
 ```
 
@@ -87,7 +93,7 @@ output. Exit code 0 means all passed. Run it after any change to the engine.
 
 ## Configuration
 
-The engine takes two positional arguments — `p1f.exe [N] [kThreads]`, N one of 14, 16, 18,
-20 — and reads everything else from environment variables. All of them are documented in
-[`env_variables.txt`](env_variables.txt); the `run.bat` files are the maintained
+The engine takes two positional arguments — `p1f.exe [N] [kThreads]`, N any even number from
+14 to 32 — and reads everything else from environment variables. All of them are documented in
+[`env_variables.md`](env_variables.md); the `run.bat` files are the maintained
 examples of how they combine.

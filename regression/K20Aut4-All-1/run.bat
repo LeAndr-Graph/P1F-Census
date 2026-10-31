@@ -45,7 +45,7 @@ REM echoes each line to the screen while a StreamWriter appends it to %LOG%, flu
 REM per line -- so nothing has to be tailed from a second window. (Tee-Object is not
 REM used: Windows PowerShell 5.1 has no -Encoding on it and would write UTF-16.)
 REM If PowerShell is missing, fall back to a plain redirect and say so.
-SET "RUNARGS=20 10"
+SET "RUNARGS=20 8"
 where powershell >nul 2>&1
 IF ERRORLEVEL 1 (
     echo %CASE%: powershell not found -- output goes to %LOG% only, watch that file
