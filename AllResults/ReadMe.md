@@ -138,7 +138,7 @@ count -- so 30 + 59 = 89 closes the size from both ends, and K16 has no class wi
 automorphism group. K14's 21 is 23 P1Fs less the 2 rigid ones; K20's 230 is its `|Aut| > 3`
 census -- `|Aut| = 3` is the separate file above.
 
-### K22, K24, K26 (2026-10-30/31)
+### K22, K24, K26
 
 These three were built by `tools\make_catalog.pl` (dedup on the canonical form, sort, emit with the
 header) from the RESULT files of their `runs\` cases. Each is checked by `tools\p1f_check` (every

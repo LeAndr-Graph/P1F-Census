@@ -11,8 +11,8 @@ Z_25 (their Table 1) and 36 from even starters in Z_24 (their Table 2).
 
 | case | automorphism | classes | wall (8 threads) | status |
 |---|---|---|---|---|
-| `K26Aut25` | type `25 1` (1-rotational) | 23 `{25:23}` | ~5 min (setup) | done 2026-10-31 |
-| `K26Aut24` | type `24 1^2` (`REP_ORDERS=24`, `REP_ONLYTYPES=1`) | 36 `{24:36}` | ~4 min (setup) | done 2026-10-31 |
+| `K26Aut25` | type `25 1` (1-rotational) | 23 `{25:23}` | ~5 min (setup) | done |
+| `K26Aut24` | type `24 1^2` (`REP_ORDERS=24`, `REP_ONLYTYPES=1`) | 36 `{24:36}` | ~4 min (setup) | done |
 | order 24 | type `24 2` | | | NOT SEARCHED: one root block, unfinished after 56 min on one thread |
 | order 13 | type `13^2` | 0 in 3.3% of the blocks | ~13 h | NOT SEARCHED: 2,238,214 root blocks after 29 min of setup |
 
@@ -25,5 +25,3 @@ a K26 P1F with `|Aut| > 3` has an automorphism of prime type `5^5 1` or `13^2`, 
 the order-5 leg `5^5 1`. Of these, only the two rotational types above are cheap on this laptop:
 the order-5, order-4, V4, order-6 and S3 legs are not estimated yet, and `13^2` alone needs about
 13 hours. So the catalog states exactly what was searched, leg by leg.
-
-`results_2026-10-26\order25.txt` is the first probe of the order-25 leg (the same 23 classes).

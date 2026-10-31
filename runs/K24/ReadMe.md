@@ -3,17 +3,15 @@
 By the theorems at the end of this file, at K24 (N-1 = 23, 4 | N) the only surviving
 legs are order 23 (type `23 1`), order 11 (type `11^2 1^2`) and S3.
 
-**|Aut| > 3 is complete (2026-10-30):** 561 classes, `|Aut|` = {11:531, 22:21, 23:4, 253:4, 506:1},
+**|Aut| > 3 is complete:** 561 classes, `|Aut|` = {11:531, 22:21, 23:4, 253:4, 506:1},
 catalog `AllResults\K24_P1F_aut_gt3.txt`. Every bat checks its result against it
 (`compare_to_catalog.pl --n 24`). Order 3 (`|Aut| = 3`) is out of reach on this laptop.
 
 | case | automorphism | classes | wall (8 threads) | status |
 |---|---|---|---|---|
-| `K24Aut23` | type `23 1` (1-rotational) | 9 `{23:4, 253:4, 506:1}` | ~2 s | done 2026-10-30; = Pike-Shalaby Table 1 (9 starters classes) |
-| `K24Aut11` | type `11^2 1^2` | 557 `{11:531, 22:21, 253:4, 506:1}` | ~62 min | done 2026-10-30; includes the 22 even-starter classes (Pike-Shalaby Table 2) and 5 of the 9 above; the 4 with `\|Aut\| = 23` have no element of order 11 |
-| `K24AutS3` | S3 shapes | 0 | ~34 min | done 2026-10-30; needs the GSYM prune (before it, shape `t2 d0 R3 f0` ~330 h) |
-
-`results_2026-10-26\order23.txt` is the first probe of the order-23 leg (the same 9 classes).
+| `K24Aut23` | type `23 1` (1-rotational) | 9 `{23:4, 253:4, 506:1}` | ~2 s | done; = Pike-Shalaby Table 1 (9 starters classes) |
+| `K24Aut11` | type `11^2 1^2` | 557 `{11:531, 22:21, 253:4, 506:1}` | ~62 min | done; includes the 22 even-starter classes (Pike-Shalaby Table 2) and 5 of the 9 above; the 4 with `\|Aut\| = 23` have no element of order 11 |
+| `K24AutS3` | S3 shapes | 0 | ~34 min | done; needs the GSYM prune (before it, shape `t2 d0 R3 f0` ~330 h) |
 
 ---
 
