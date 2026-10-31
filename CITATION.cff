@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "P1F-Census: perfect one-factorizations of K14-K20 with non-trivial automorphisms"
+title: "P1F-Census: perfect one-factorizations of K14-K26 with non-trivial automorphisms"
 message: >-
   This repository holds the search engine and the run scripts. If you use a
   CATALOGUE, cite the Zenodo dataset DOI for the graph in question rather than

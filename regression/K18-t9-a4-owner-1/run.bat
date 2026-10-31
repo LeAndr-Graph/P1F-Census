@@ -93,6 +93,6 @@ SET "REP_F3STOP=%~1"
 SET "RESULT=result%~1.txt"
 SET "LOG=%HERE%owner%~1.log"
 echo %CASE%: EXE=%EXE%  LOG=owner%~1.log
-powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $enc=New-Object System.Text.UTF8Encoding $false; $w=New-Object System.IO.StreamWriter($env:LOG,$false,$enc); & cmd /c ('\"' + $env:EXE + '\" 18 10 2>&1') | ForEach-Object { $_; $w.WriteLine($_); $w.Flush() }; $w.Close(); exit $LASTEXITCODE"
+powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $enc=New-Object System.Text.UTF8Encoding $false; $w=New-Object System.IO.StreamWriter($env:LOG,$false,$enc); & cmd /c ('\"' + $env:EXE + '\" 18 8 2>&1') | ForEach-Object { $_; $w.WriteLine($_); $w.Flush() }; $w.Close(); exit $LASTEXITCODE"
 IF NOT "%ERRORLEVEL%"=="0" echo %CASE%: block 4.0.%~1 stopped, exit code %ERRORLEVEL%
 exit /b 0

@@ -1,4 +1,4 @@
-# P1F-Census: Perfect 1-Factorizations of K18 and K20 with Non-Trivial Automorphisms
+# P1F-Census: Perfect 1-Factorizations of K18–K26 with Non-Trivial Automorphisms
 
 **Repository (source code, run scripts, catalogues):** <https://github.com/LeAndr-Graph/P1F-Census>
 
@@ -26,6 +26,21 @@ dataset DOIs [10.5281/zenodo.22215011](https://doi.org/10.5281/zenodo.22215011) 
 [10.5281/zenodo.22880728](https://doi.org/10.5281/zenodo.22880728) (|Aut| = 3) ·
 runs: [`runs/K20/`](runs/K20/)
 
+**K22:** there are exactly **687** pairwise non-isomorphic P1Fs of K22 with |Aut| > 6,
+|Aut| = {7:536, 10:126, 20:20, 21:3, 110:1, 220:1}.
+Catalogue: [`AllResults/K22_P1F_aut_gt6.txt`](AllResults/K22_P1F_aut_gt6.txt) ·
+runs and proof of scope: [`runs/K22/`](runs/K22/)
+
+**K24:** there are exactly **561** pairwise non-isomorphic P1Fs of K24 with |Aut| > 3,
+|Aut| = {11:531, 22:21, 23:4, 253:4, 506:1}; four of them give atomic Latin squares of order 23.
+Catalogue: [`AllResults/K24_P1F_aut_gt3.txt`](AllResults/K24_P1F_aut_gt3.txt) ·
+runs and proof of scope: [`runs/K24/`](runs/K24/)
+
+**K26** (per automorphism type, not by |Aut|): **23** classes with an automorphism of type 25 1 and
+**36** with one of type 24 1², as counted by Pike and Shalaby (2003).
+Catalogue: [`AllResults/K26_P1F_rot25_24.txt`](AllResults/K26_P1F_rot25_24.txt) ·
+runs: [`runs/K26/`](runs/K26/)
+
 **Derived:** 104,088 P1Fs of K17,17 from the K18 catalogue,
 [10.5281/zenodo.22548329](https://doi.org/10.5281/zenodo.22548329).
 
@@ -49,6 +64,8 @@ Leonid M. Tertitski, ORCID [0009-0002-7556-9552](https://orcid.org/0009-0002-755
 | theorems the search relies on (Ihrig 1986) | [`docs/theorems.md`](docs/theorems.md) |
 | build, configuration, regression suite | [`docs/build.md`](docs/build.md) |
 | what is open (K20 \|Aut\| = 2) | [`runs/K20/ReadMe.md`](runs/K20/ReadMe.md) |
+| what is open at K22, K24, K26 | `ReadMe.md` in [`runs/K22/`](runs/K22/), [`runs/K24/`](runs/K24/), [`runs/K26/`](runs/K26/) |
+| checking a result file (`p1f_check`, `atomcat`, `make_catalog.pl`) | [`tools/ReadMe.md`](tools/ReadMe.md) |
 
 ## Citing
 

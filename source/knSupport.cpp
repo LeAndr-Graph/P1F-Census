@@ -1,5 +1,5 @@
 // p1f support -- the one symbol the moved engines need from the utility side:
-// printWithPowers. The four rep engines forward-declare the function themselves, so no
+// printWithPowers. The knA2 engine forward-declares the function itself, so no
 // header is needed.
 //
 // The superscripts are unconditional -- deliberately NOT gated on stdout being a terminal. Every

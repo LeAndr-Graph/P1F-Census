@@ -53,6 +53,9 @@ my %CATALOG = (
     16 => 'K16_P1F_aut_gt1.txt',   # was K16_P1F_aut_gt2.txt, 30 classes, until 2026-09-01
     18 => 'K18_P1F_aut_gt1.txt',
     20 => 'K20_P1F_aut_gt3.txt',
+    22 => 'K22_P1F_aut_gt6.txt',   # |Aut| > 6 (runs/K22/ReadMe.md)
+    24 => 'K24_P1F_aut_gt3.txt',   # |Aut| > 3 = orders 23, 11 + S3 (runs/K24/ReadMe.md)
+    26 => 'K26_P1F_rot25_24.txt',  # per leg, not by |Aut|: types 25 1 and 24 1^2 (runs/K26/ReadMe.md)
 );
 my $N = 18;   # --n picks the catalog. 18 is the default because every caller that predates
               # the other three means K18, and none of them passes the flag.

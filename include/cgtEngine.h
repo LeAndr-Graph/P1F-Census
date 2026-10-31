@@ -1,7 +1,7 @@
 // =============================================================================
 // cgtEngine.h -- small computational-group-theory engine on N points, shared by the
-// automorphism-representative classifiers (k18a2rep / k16A2rep / k20a2rep). Templated on
-// N so each classifier instantiates it at its own vertex count.
+// automorphism-representative classifier (knA2rep.inl, one translation unit per N). Templated
+// on N so each instantiation uses it at its own vertex count.
 //
 // Contents (namespace cgt):
 //   * permutation helpers: idPerm, composePerm, invPerm, applyPerm

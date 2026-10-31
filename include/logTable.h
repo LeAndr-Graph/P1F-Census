@@ -2,8 +2,7 @@
 // =============================================================================
 // include/logTable.h -- the ONE writer for every table in a p1f run log.
 //
-// Shared by all four engines and p1f.cpp, so the
-// sibling rule holds by construction: one copy of the formatting, not four.
+// Shared by the knA2 engine (every N) and p1f.cpp: one copy of the formatting.
 //
 // It knows nothing about P1Fs, blocks or automorphisms -- it turns counts into
 // aligned text.  Callers hand it cells already formatted by the fmt* helpers.

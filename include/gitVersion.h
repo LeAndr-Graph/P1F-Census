@@ -3,4 +3,4 @@
 // solver behavior (engine, params, run scripts). Convention: yyMMdd + letter
 // + short tag. A source archive ships this file as-is, so builds made without
 // git print the same version; the "Compiled:" timestamp tells builds apart.
-#define GIT_VERSION "260914a first public release"
+#define GIT_VERSION "261031a one engine for even N 14..32; K22, K24, K26 catalogs"
