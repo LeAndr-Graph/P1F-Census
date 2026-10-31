@@ -13,6 +13,19 @@ catalog `AllResults\K24_P1F_aut_gt3.txt`. Every bat checks its result against it
 | `K24Aut11` | type `11^2 1^2` | 557 `{11:531, 22:21, 253:4, 506:1}` | ~62 min | done; includes the 22 even-starter classes (Pike-Shalaby Table 2) and 5 of the 9 above; the 4 with `\|Aut\| = 23` have no element of order 11 |
 | `K24AutS3` | S3 shapes | 0 | ~34 min | done; needs the GSYM prune (before it, shape `t2 d0 R3 f0` ~330 h) |
 
+## Restart
+
+All K24 cases use the block walk.
+
+**Block walk.** Every 5 minutes the log's `~ so far` row ends with `Block restart #(%)` = k, the
+lowest root block not finished. Move the old log and result file (`RESULT` in `run.bat`) aside, add
+`SET "REP_BLOCKS=k-last"` to `run.bat`, and run it; the new result plus the old one,
+merged by `tools/make_catalog.pl` (which removes duplicates), is the full answer. Blocks above
+k that were already done are walked again. `REP_BLOCKS` applies to every leg and type of the
+run, so in a run with several legs also set `REP_ORDERS` and `REP_ONLYTYPES` to the
+interrupted one, and run the legs the log never reached as their own run. A run shorter than
+5 minutes prints no restart row: run it again from the start.
+
 ---
 
 ## Why these legs are enough for `|Aut| > 3`

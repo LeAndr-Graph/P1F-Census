@@ -9,6 +9,14 @@ Each `run.bat` sets N and the thread count in `RUNARGS` and starts `p1f.exe [N] 
 (N any even number 14..32); everything else is environment variables, all documented in
 [`docs/env_variables.md`](../docs/env_variables.md).
 
+## Restarting an interrupted run
+
+The restart is not the same for every case: each search mode counts its progress in its own
+unit, so each has its own way to continue. The modes are the block walk (most cases), the
+branch split (`REP_SPLIT`), the order-2 block driver (`REP_F3COMPLETE`, K14 and K18) and the
+K20 order-3 cell's 104 blocks. Read the `ReadMe.md` of the graph's folder (`K22/ReadMe.md`,
+...) for which one its cases use and how.
+
 ## Case names
 
 `KnAut<k>` searches the classes with an automorphism of order `k` (`K22Aut7`: K22, order 7).
