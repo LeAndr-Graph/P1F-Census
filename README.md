@@ -55,6 +55,11 @@ and the K16 classes with |Aut| > 1 (Gill and Wanless, 2020):
 Andrei V. Ivanov, ORCID [0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716), died September 2026.<br>
 Leonid M. Tertitski, ORCID [0009-0002-7556-9552](https://orcid.org/0009-0002-7556-9552) (corresponding).
 
+**AI assistance:** the extensions for K22 and above (engine changes, run scripts) and much of the
+documentation were developed with AI coding assistants (Google Antigravity, Anthropic Claude Code).
+Every catalogue is verified by the independent checks in [`tools/ReadMe.md`](tools/ReadMe.md);
+responsibility for the results rests with the authors.
+
 ## Where the details are
 
 | Topic | File |
