@@ -1,5 +1,5 @@
-title: "P1F-Census: Perfect 1-Factorizations of K18 and K20 with Non-Trivial Automorphisms"
+title: "P1F-Census: Perfect 1-Factorizations of K18–K26 with Non-Trivial Automorphisms"
 tagline: "engine and catalogues"
-description: "Perfect 1-factorizations of K18 and K20: catalogues of all classes with non-trivial automorphisms, plus the search engine and regression data."
+description: "Perfect 1-factorizations of K18–K26: catalogues of the classes with non-trivial automorphisms, plus the search engine and regression data."
 plugins:
   - jekyll-sitemap
