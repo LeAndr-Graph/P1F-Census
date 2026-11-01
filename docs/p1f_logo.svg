@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 250" width="240" height="250">
+<style>
+.bg{stroke:#8884;stroke-width:1} .a{stroke:#d9480f;stroke-width:4;stroke-linecap:round} .b{stroke:#1971c2;stroke-width:4;stroke-linecap:round}
+.r{transform-origin:120px 115px;animation:rot 14s ease-in-out infinite,hue 28s linear infinite}@keyframes rot{0.00%{transform:rotate(0.000deg)}12.14%{transform:rotate(51.429deg)}14.29%{transform:rotate(51.429deg)}26.43%{transform:rotate(102.857deg)}28.57%{transform:rotate(102.857deg)}40.71%{transform:rotate(154.286deg)}42.86%{transform:rotate(154.286deg)}55.00%{transform:rotate(205.714deg)}57.14%{transform:rotate(205.714deg)}69.29%{transform:rotate(257.143deg)}71.43%{transform:rotate(257.143deg)}83.57%{transform:rotate(308.571deg)}85.71%{transform:rotate(308.571deg)}97.86%{transform:rotate(360.000deg)}100%{transform:rotate(360deg)}}@keyframes hue{0%{filter:hue-rotate(0deg)}100%{filter:hue-rotate(360deg)}}
+.v{fill:#fff;stroke:#555;stroke-width:2} text{font:600 15px sans-serif;fill:#888;text-anchor:middle}
+</style>
+<line class="bg" x1="120.0" y1="20.0" x2="194.3" y2="55.8"/>
+<line class="bg" x1="120.0" y1="20.0" x2="212.6" y2="136.1"/>
+<line class="bg" x1="120.0" y1="20.0" x2="161.2" y2="200.6"/>
+<line class="bg" x1="120.0" y1="20.0" x2="78.8" y2="200.6"/>
+<line class="bg" x1="120.0" y1="20.0" x2="27.4" y2="136.1"/>
+<line class="bg" x1="120.0" y1="20.0" x2="45.7" y2="55.8"/>
+<line class="bg" x1="120.0" y1="20.0" x2="120.0" y2="115.0"/>
+<line class="bg" x1="194.3" y1="55.8" x2="212.6" y2="136.1"/>
+<line class="bg" x1="194.3" y1="55.8" x2="161.2" y2="200.6"/>
+<line class="bg" x1="194.3" y1="55.8" x2="78.8" y2="200.6"/>
+<line class="bg" x1="194.3" y1="55.8" x2="27.4" y2="136.1"/>
+<line class="bg" x1="194.3" y1="55.8" x2="45.7" y2="55.8"/>
+<line class="bg" x1="194.3" y1="55.8" x2="120.0" y2="115.0"/>
+<line class="bg" x1="212.6" y1="136.1" x2="161.2" y2="200.6"/>
+<line class="bg" x1="212.6" y1="136.1" x2="78.8" y2="200.6"/>
+<line class="bg" x1="212.6" y1="136.1" x2="27.4" y2="136.1"/>
+<line class="bg" x1="212.6" y1="136.1" x2="45.7" y2="55.8"/>
+<line class="bg" x1="212.6" y1="136.1" x2="120.0" y2="115.0"/>
+<line class="bg" x1="161.2" y1="200.6" x2="78.8" y2="200.6"/>
+<line class="bg" x1="161.2" y1="200.6" x2="27.4" y2="136.1"/>
+<line class="bg" x1="161.2" y1="200.6" x2="45.7" y2="55.8"/>
+<line class="bg" x1="161.2" y1="200.6" x2="120.0" y2="115.0"/>
+<line class="bg" x1="78.8" y1="200.6" x2="27.4" y2="136.1"/>
+<line class="bg" x1="78.8" y1="200.6" x2="45.7" y2="55.8"/>
+<line class="bg" x1="78.8" y1="200.6" x2="120.0" y2="115.0"/>
+<line class="bg" x1="27.4" y1="136.1" x2="45.7" y2="55.8"/>
+<line class="bg" x1="27.4" y1="136.1" x2="120.0" y2="115.0"/>
+<line class="bg" x1="45.7" y1="55.8" x2="120.0" y2="115.0"/>
+<g class="r"><line class="a" x1="120.0" y1="115.0" x2="120.0" y2="20.0"/><line class="a" x1="45.7" y1="55.8" x2="194.3" y2="55.8"/><line class="a" x1="27.4" y1="136.1" x2="212.6" y2="136.1"/><line class="a" x1="78.8" y1="200.6" x2="161.2" y2="200.6"/><line class="b" x1="120.0" y1="115.0" x2="194.3" y2="55.8"/><line class="b" x1="120.0" y1="20.0" x2="212.6" y2="136.1"/><line class="b" x1="45.7" y1="55.8" x2="161.2" y2="200.6"/><line class="b" x1="27.4" y1="136.1" x2="78.8" y2="200.6"/></g>
+<circle class="v" cx="120.0" cy="20.0" r="6"/>
+<circle class="v" cx="194.3" cy="55.8" r="6"/>
+<circle class="v" cx="212.6" cy="136.1" r="6"/>
+<circle class="v" cx="161.2" cy="200.6" r="6"/>
+<circle class="v" cx="78.8" cy="200.6" r="6"/>
+<circle class="v" cx="27.4" cy="136.1" r="6"/>
+<circle class="v" cx="45.7" cy="55.8" r="6"/>
+<circle class="v" cx="120.0" cy="115.0" r="6"/>
+<text x="120" y="242">P1F-Census</text></svg>

@@ -1,5 +1,7 @@
 # P1F-Census: Perfect 1-Factorizations of K18–K26 with Non-Trivial Automorphisms
 
+<img src="docs/p1f_logo.svg" align="right" width="160" alt="Two factors of the perfect 1-factorisation GK8 rotating; at each stop they form a Hamiltonian cycle">
+
 **Repository (source code, run scripts, catalogues):** <https://github.com/LeAndr-Graph/P1F-Census>
 
 **K18:** there are exactly **10,710** pairwise non-isomorphic perfect 1-factorizations (P1Fs) of
