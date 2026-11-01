@@ -1,6 +1,6 @@
-# P1F-Census: Perfect 1-Factorizations of K18–K26 with Non-Trivial Automorphisms
-
 <img src="docs/p1f_logo.svg" align="right" width="160" alt="Pairs of consecutive factors of K18 P1F #5000 sliding into each other; at each stop they form a Hamiltonian 18-cycle">
+
+# P1F-Census: Perfect 1-Factorizations of K18–K26 with Non-Trivial Automorphisms
 
 **Repository (source code, run scripts, catalogues):** <https://github.com/LeAndr-Graph/P1F-Census>
 

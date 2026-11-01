@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 245" width="240" height="245">
 <style>.bg{stroke:#8883;stroke-width:.7} .a{stroke:#d9480f;stroke-width:3;stroke-linecap:round} .b{stroke:#1971c2;stroke-width:3;stroke-linecap:round}
 .v{fill:#fff;stroke:#555;stroke-width:1.5} .h{animation:hue 112s linear infinite}
-@keyframes hue{0%{filter:hue-rotate(0deg)}100%{filter:hue-rotate(360deg)}} text{font:600 15px sans-serif;fill:#888;text-anchor:middle} .c{font:600 20px sans-serif;text-anchor:end} .l{font:600 10px sans-serif;text-anchor:start}</style>
+@keyframes hue{0%{filter:hue-rotate(0deg)}100%{filter:hue-rotate(360deg)}} text{font:600 15px sans-serif;fill:#888;text-anchor:middle} .c{font:600 20px sans-serif;text-anchor:end} .l{font:600 15px sans-serif;text-anchor:start}</style>
 <line class="bg" x1="120.0" y1="12.0" x2="154.2" y2="18.0"/>
 <line class="bg" x1="120.0" y1="12.0" x2="184.3" y2="35.4"/>
 <line class="bg" x1="120.0" y1="12.0" x2="206.6" y2="62.0"/>
@@ -174,7 +174,7 @@
 <circle class="v" cx="33.4" cy="62.0" r="4"/>
 <circle class="v" cx="55.7" cy="35.4" r="4"/>
 <circle class="v" cx="85.8" cy="18.0" r="4"/>
-<text x="120" y="238">P1F-Census</text>
+<text x="131" y="238">P1F-Census</text>
 <text class="c" x="236" y="238" opacity="1">1/17<animate attributeName="opacity" calcMode="discrete" dur="55.8s" repeatCount="1" fill="freeze" keyTimes="0;0.0771" values="1;0"/></text>
 <text class="c" x="236" y="238" opacity="0">2/17<animate attributeName="opacity" calcMode="discrete" dur="55.8s" repeatCount="1" fill="freeze" keyTimes="0;0.0771;0.1362" values="0;1;0"/></text>
 <text class="c" x="236" y="238" opacity="0">3/17<animate attributeName="opacity" calcMode="discrete" dur="55.8s" repeatCount="1" fill="freeze" keyTimes="0;0.1362;0.1953" values="0;1;0"/></text>
