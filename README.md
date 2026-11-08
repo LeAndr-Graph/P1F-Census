@@ -2,8 +2,13 @@
 
 # P1F-Census: Perfect 1-Factorizations of K18–K26 with Non-Trivial Automorphisms
 
-**Repository (source code, run scripts, catalogues):** <https://github.com/LeAndr-Graph/P1F-Census>  
+<!-- The web page shows the repository link, GitHub shows the web-page link. On the web page Liquid
+     turns the first block into an empty comment and the line into text; GitHub keeps it all a comment. {{ "-" | append: "->" }}
+**Repository (source code, run scripts, catalogues):** <https://github.com/LeAndr-Graph/P1F-Census>
+{{ "<!" | append: "--" }} -->
+<!-- {% comment %} -->
 **Web page:** <https://leandr-graph.github.io/P1F-Census/>
+<!-- {% endcomment %} -->
 
 **K18:** there are exactly **10,710** pairwise non-isomorphic perfect 1-factorizations (P1Fs) of
 K18 with a non-trivial automorphism group (|Aut| > 1).
