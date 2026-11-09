@@ -62,10 +62,11 @@ and the K16 classes with |Aut| > 1 (Gill and Wanless, 2020):
 [`AllResults/K16_P1F_aut_gt1.txt`](AllResults/K16_P1F_aut_gt1.txt) (89),
 [`runs/K14/`](runs/K14/), [`runs/K16/`](runs/K16/), [`regression/`](regression/).
 
-**Hardware:** all results were computed on two ordinary computers with regular processors, one
-desktop PC (Intel Core i9-14900K) and one laptop (Intel Core i7-12700H), with no dedicated GPU and
-no cluster. The K20 |Aut| = 3 census ran on the desktop; K22 to K26 and the K18 uniform search ran
-on the laptop. One K20 block was re-run once on a cloud machine as a check.
+**Hardware:** all results were computed on ordinary computers with regular processors, with no
+dedicated GPU and no cluster: one desktop PC bought in 2026 (Intel Core i9-14900K) and three older
+machines, two laptops and a desktop, of the speed of a laptop with an Intel Core i7-12700H. The K20
+|Aut| = 3 census ran mainly on the 2026 desktop; K22 to K26 and the K18 uniform search ran on the
+i7-12700H laptop. One K20 block was re-run once on a cloud machine as a check.
 
 ## Authors
 
