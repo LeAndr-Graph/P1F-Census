@@ -62,6 +62,11 @@ and the K16 classes with |Aut| > 1 (Gill and Wanless, 2020):
 [`AllResults/K16_P1F_aut_gt1.txt`](AllResults/K16_P1F_aut_gt1.txt) (89),
 [`runs/K14/`](runs/K14/), [`runs/K16/`](runs/K16/), [`regression/`](regression/).
 
+**Hardware:** all results were computed on two ordinary computers with regular processors, one
+desktop PC (Intel Core i9-14900K) and one laptop (Intel Core i7-12700H), with no dedicated GPU and
+no cluster. The K20 |Aut| = 3 census ran on the desktop; K22 to K26 and the K18 uniform search ran
+on the laptop. One K20 block was re-run once on a cloud machine as a check.
+
 ## Authors
 
 Andrei V. Ivanov, ORCID [0000-0002-1574-6716](https://orcid.org/0000-0002-1574-6716), died September 2026.<br>
