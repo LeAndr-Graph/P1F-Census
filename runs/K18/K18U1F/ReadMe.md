@@ -26,7 +26,21 @@ remaining row, always branching on the row with the fewest candidates.
 
 ## Controls
 
-The same program, `k18u1f N type`:
+`run_controls.bat` runs known answers: one class each for K8 4.4, K10 4.6, K12 6.6 and K16 4.4.4.4,
+and nothing for K16 4.12, 6.10, 8.8, 4.4.8, 4.6.6 and K14 4.10, 6.8, 4.4.6.
 
-- K16 4.4.4.4 finds a factorization, as known.
-- K16 4.12, 6.10, 8.8, 4.4.8, 4.6.6 and K14 4.10, 6.8, 4.4.6 find nothing.
+## Largest partial factorizations
+
+A partial with k rows is k pairwise edge-disjoint perfect matchings of K18, every two of which
+have the cycle type. `run_max.bat` runs `k18u1f 18 <type> max` per type and checks each output
+byte for byte against `AllResults/K18_U1F_max_<type>.txt`, one record per isomorphism class with |Aut|.
+
+| type | largest k | classes | time |
+|---|---:|---:|---:|
+| 4.4.4.6 | 7 | 5 | 1 s |
+| 4.6.8 | 7 | 239 | 3 s |
+| 4.4.10 | 9 | 1 | 1 s |
+| 6.6.6 | 15 | 2 | 1 s |
+| 8.10 | 15 | 2 | 5 min |
+| 6.12 | 10 | 15 | 24 min |
+| 4.14 | 11 or more | not finished | |
