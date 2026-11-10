@@ -1,7 +1,7 @@
 @echo off
 REM ============================================================================
 REM  runs\K18\K18U1F -- no uniform 1-factorization of K18 of any non-Hamiltonian
-REM  type. Standalone search tools\k18u1f.cpp: no canonizer, no input file.
+REM  type. Standalone search tools\k18u1f.cpp: no input file.
 REM  About 45 min at 8 threads, BELOW NORMAL priority. Writes K18U1F.log.
 REM ============================================================================
 SET "HERE=%~dp0"

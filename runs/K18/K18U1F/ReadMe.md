@@ -4,7 +4,7 @@
 4.4.4.6, 4.4.10, 4.6.8, 4.14, 6.6.6, 6.12 and 8.10; every search below finds nothing.
 
 `run.bat` builds `tools/k18u1f.cpp` if needed, runs all seven types and checks the result. The
-program reads no input file and uses no canonizer. Times are for 8 threads on a laptop (Intel Core
+program reads no input file. Times are for 8 threads on a laptop (Intel Core
 i7-12700H).
 
 | type | candidates | root jobs | found | deepest reached | time |
@@ -60,4 +60,19 @@ same command again and finished shards are skipped. For 4.14:
 
 Any class in the merged file means 12 rows exist; then run K = 13 the same way. If K = 12 gives
 none, the largest is 11, and the same command with K = 11 collects all classes at 11 rows. Shards
-of a finished type merge to exactly its file in `AllResults`.
+of a finished type merge to exactly its file in `AllResults`. The 12-row pass of 4.14 takes about
+30 h at 8 threads.
+
+**Extending a file.** `k18u1f 18 <type> extend <file>` counts, for each class in a class file, the
+matchings compatible with all its rows, that is, the ways to add one more row. Every file in
+`AllResults` gives 0, as a largest partial must. For 4.14, none of the 473 classes with 11 rows
+from root jobs 0 to 8 extends to 12 rows.
+
+**Branch counts.** Every progress and RESULT line ends with `rows 3..K: n3 ... nK`: how many
+branches of the pass held 3, 4, ... K rows, with nK the number found. They show where the search
+is cut; for 4.14 at 12 rows almost all branches end at 6 or 7 rows.
+
+**Speed.** Once a subtree has at most 4096 live candidates, the program copies them into a small
+matrix of its own, which fits in cache, and searches the subtree there in the same order. This
+makes the max passes 2 to 4 times faster (4.14 at 11 rows, jobs 0 to 8: 355 s, before 1387 s)
+and leaves every count and file unchanged.

@@ -12,7 +12,7 @@
 // factorizations: each set of rows containing the two fixed rows is counted once.
 //
 // A full search (rows = N-1) only has to decide whether anything exists, so it uses the symmetry
-// of the fixed pair: the row through one chosen edge at vertex 0 is tried once per orbit. Its
+// of the fixed pair: the row through one chosen edge at vertex 0 is tried once per orbit.
 // Each isomorphism class found goes to K<N>_U1F_<type>.txt with its |Aut|. It also keeps the partials
 // with the most rows the search reached, up to `hold` classes, in K<N>_U1F_deepest_<type>.txt. The
 // search abandons a branch once any row is out of candidates, so that size is not the maximum.
@@ -23,6 +23,14 @@
 // record per isomorphism class at that size, with |Aut|, to K<N>_U1F_max_<type>.txt. Orbits of
 // candidates are numbered, and the root of a job only combines with candidates of its own or a
 // later orbit: a symmetry takes any partial to one whose smallest orbit is met at the root.
+//
+//   k18u1f N type max threads K first last      one shard: the K-row pass for root jobs [first, last)
+//   k18u1f N type extend classes.txt [threads]  for each class, the ways to add one more row
+//   k18u1f merge out.txt in1.txt [in2.txt ...]   union of shard files, as a single run writes it
+//
+// Every pass line and RESULT line ends with "rows 3..K: n3 ... nK", the number of branches that
+// held 3, 4, ... K rows (nK = found). On Windows the program says "k task exit ok" at the end, as
+// Tt4 does.
 
 #include <algorithm>
 #include <array>
@@ -41,6 +49,29 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+// Spoken report at the end of a run, as in Tt4 (Windows speech, volume 30). Nothing elsewhere.
+#define RPC_NO_WINDOWS_H
+#define NOMINMAX
+#include <sapi.h>
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "sapi.lib")
+static void speak(const std::string& text) {
+    if (FAILED(::CoInitialize(NULL))) return;
+    ISpVoice* voice = NULL;
+    if (SUCCEEDED(CoCreateInstance(CLSID_SpVoice, NULL, CLSCTX_ALL, IID_PPV_ARGS(&voice)))) {
+        std::wstring w(text.begin(), text.end());
+        voice->SetVolume(30);
+        voice->Speak(w.c_str(), 0, NULL);
+        voice->Release();
+    }
+    ::CoUninitialize();
+}
+#else
+static void speak(const std::string&) {}
+#endif
+
+#include <immintrin.h>
 #ifdef _MSC_VER
 #include <intrin.h>
 static inline int popcnt64(uint64_t x) { return (int)__popcnt64(x); }
@@ -49,6 +80,8 @@ static inline int ctz64(uint64_t x) { unsigned long i; _BitScanForward64(&i, x);
 static inline int popcnt64(uint64_t x) { return __builtin_popcountll(x); }
 static inline int ctz64(uint64_t x) { return __builtin_ctzll(x); }
 #endif
+// The bits of x at the positions set in m, packed to the low end (BMI2; build with AVX2/BMI2).
+static inline uint64_t pext64(uint64_t x, uint64_t m) { return _pext_u64(x, m); }
 
 using Match = std::array<int8_t, 32>;   // Match[v] = partner of v
 
@@ -134,10 +167,30 @@ static std::vector<std::vector<int>> orbitOf;   // max mode: orbit number of eac
 static std::vector<Job> jobs;
 static int rowsWanted;
 static bool maxMode = false, collecting = false;
+// A subtree whose live candidates number at most localMax is searched on its own small matrix,
+// which fits in cache. 4096 measured best on 4.14, 12 rows, jobs 1000-1008: 44.5 s, against 92 s
+// without, 52 s at 16384 and much slower at 1024. Env U1F_LOCAL overrides it (0 = off).
+static const int localMax = getenv("U1F_LOCAL") ? atoi(getenv("U1F_LOCAL")) : 4096;
+// Edge-overlap test before compat when a job's matrix is built; env U1F_NOEDGE switches it off.
+static const bool edgeFilter = getenv("U1F_NOEDGE") == nullptr;
+// Aligned AVX2 AND over the whole local matrix (W padded to 4 words). Measured no faster on 4.14,
+// 12 rows, jobs 500-516 (233/249 s against 231/237 s): the matrix is in cache. Off; /D U1F_ALIGNED_AND=1 to try.
+#ifndef U1F_ALIGNED_AND
+#define U1F_ALIGNED_AND 0
+#endif
+static constexpr bool alignedAnd = U1F_ALIGNED_AND != 0;
 static std::atomic<bool> stopPass{false};
 static std::atomic<int> running{0};
 static std::atomic<size_t> nextJob{0}, jobsDone{0};
 static std::atomic<uint64_t> totalFound{0}, totalNodes{0};
+static std::array<std::atomic<uint64_t>, 33> depthNodes;   // branches that reached d rows
+
+// "rows 3..K: n3 n4 ... nK", the number of branches of this pass that held d rows; nK = found.
+static std::string depthLine() {
+    std::string s = "rows 3.." + std::to_string(rowsWanted) + ":";
+    for (int d = 3; d <= rowsWanted; d++) s += " " + std::to_string(depthNodes[d].load());
+    return s;
+}
 
 // Isomorphism classes of the results collected.
 struct ClassRecord { std::vector<Match> rows; uint64_t aut; };
@@ -267,69 +320,160 @@ static bool writeClasses(std::vector<ClassRecord>& classes, const std::string& n
 // Word-aligned bit range of one row's candidates.
 struct Range { int first, words, count; };
 
-class Worker {
+// 64-byte aligned storage for the bit sets, so that 4-word AVX2 loads never split a cache line.
+template <class T> struct Aligned64 {
+    using value_type = T;
+    Aligned64() = default;
+    template <class U> Aligned64(const Aligned64<U>&) {}
+    T* allocate(size_t n) { return static_cast<T*>(::operator new(n * sizeof(T), std::align_val_t(64))); }
+    void deallocate(T* p, size_t) { ::operator delete(p, std::align_val_t(64)); }
+    template <class U> bool operator==(const Aligned64<U>&) const { return true; }
+    template <class U> bool operator!=(const Aligned64<U>&) const { return false; }
+};
+using Bits = std::vector<uint64_t, Aligned64<uint64_t>>;
+
+// The bit sets of one search: candidates, their compatibility and the live set per level.
+struct Ctx {
     int W = 0;                                  // words per bit set
     std::vector<const Match*> cand;             // bit -> matching
-    std::vector<uint64_t> adj;                  // W words per bit
-    std::vector<uint64_t> alive;                // W words per level
+    Bits adj;                                   // W words per bit
+    Bits alive;                                 // W words per level
     std::vector<std::array<Range, 32>> act;     // active rows per level
+};
+
+static inline void putBits(uint64_t* dst, int p, uint64_t bits, int k) {
+    dst[p >> 6] |= bits << (p & 63);
+    if ((p & 63) + k > 64) dst[(p >> 6) + 1] |= bits >> (64 - (p & 63));
+}
+
+class Worker {
+    Ctx top;                                    // the job: all candidates compatible with the root
+    Ctx local;                                  // one subtree, rebuilt on its live candidates only
+    std::vector<int> global;                    // local bit -> bit in top
     std::vector<const Match*> chosen;
     const Match* root = nullptr;
     uint64_t found = 0, nodes = 0;
+    std::array<uint64_t, 33> atDepth{};
 
-    void collectAll(int L, int nAct) {
+    void collectAll(Ctx& c, int L, int nAct) {
         std::vector<const Match*> rows = { &R1, &R2, root };
         rows.insert(rows.end(), chosen.begin(), chosen.end());
         rows.push_back(nullptr);
         for (int j = 0; j < nAct; j++) {
-            const Range& r = act[L][j];
+            const Range& r = c.act[L][j];
             for (int w = r.first; w < r.first + r.words; w++)
-                for (uint64_t bits = alive[(size_t)L * W + w]; bits; bits &= bits - 1) {
-                    rows.back() = cand[64 * w + ctz64(bits)];
+                for (uint64_t bits = c.alive[(size_t)L * c.W + w]; bits; bits &= bits - 1) {
+                    rows.back() = c.cand[64 * w + ctz64(bits)];
                     addPartial(rows);
                     found++;
                 }
         }
     }
 
-    // act[L][0..nAct) are rows with at least one candidate; nAct >= need >= 1.
-    void dfs(int L, int nAct, int need) {
+    // Copy level L of the job into `local`, keeping only the live candidates, each row packed into
+    // its own words in the same order. The search of the subtree then reads a matrix of about
+    // live x live bits, which fits in cache, instead of rows of the whole job.
+    void compact(int L, int nAct) {
+        const uint64_t* cur = &top.alive[(size_t)L * top.W];
+        std::array<Range, 32> ranges;
+        int words = 0;
+        for (int j = 0; j < nAct; j++) {
+            const int c = top.act[L][j].count, w = (c + 63) / 64;
+            ranges[j] = { words, w, c };
+            words += w;
+        }
+        if (alignedAnd) words = (words + 3) & ~3;        // whole 32-byte blocks per row
+        local.W = words;
+        local.cand.assign((size_t)words * 64, nullptr);
+        local.adj.assign((size_t)words * 64 * words, 0);
+        local.alive.assign((size_t)words * (N + 2), 0);
+        if (local.act.size() < (size_t)N + 2) local.act.resize((size_t)N + 2);
+        global.assign((size_t)words * 64, -1);
+        for (int j = 0; j < nAct; j++) {
+            const Range& r = top.act[L][j];
+            int p = 64 * ranges[j].first;
+            for (int u = r.first; u < r.first + r.words; u++)
+                for (uint64_t bits = cur[u]; bits; bits &= bits - 1) {
+                    global[p] = 64 * u + ctz64(bits);
+                    local.cand[p] = top.cand[global[p]];
+                    local.alive[p >> 6] |= 1ULL << (p & 63);
+                    p++;
+                }
+            local.act[0][j] = ranges[j];
+        }
+        for (int i = 0; i < words * 64; i++) {
+            if (global[i] < 0) continue;
+            const uint64_t* a = &top.adj[(size_t)global[i] * top.W];
+            uint64_t* dst = &local.adj[(size_t)i * words];
+            for (int j = 0; j < nAct; j++) {
+                const Range& r = top.act[L][j];
+                int p = 64 * ranges[j].first;
+                for (int u = r.first; u < r.first + r.words; u++) {
+                    const uint64_t m = cur[u];
+                    if (!m) continue;
+                    const int k = popcnt64(m);
+                    putBits(dst, p, pext64(a[u], m), k);
+                    p += k;
+                }
+            }
+        }
+    }
+
+    // c.act[L][0..nAct) are rows with at least one candidate; nAct >= need >= 1.
+    void dfs(Ctx& c, int L, int nAct, int need) {
+        if (&c == &top && localMax > 0) {
+            int live = 0;
+            for (int j = 0; j < nAct && live <= localMax; j++) live += c.act[L][j].count;
+            if (live <= localMax) { compact(L, nAct); dfs(local, 0, nAct, need); return; }
+        }
         nodes++;
         if (need == 1) {
-            if (collecting) { collectAll(L, nAct); return; }
-            for (int j = 0; j < nAct; j++) found += act[L][j].count;
+            if (collecting) { collectAll(c, L, nAct); return; }
+            for (int j = 0; j < nAct; j++) found += c.act[L][j].count;
             if (maxMode) stopPass = true;
             return;
         }
         int best = 0;
         for (int j = 1; j < nAct; j++)
-            if (act[L][j].count < act[L][best].count) best = j;
-        const Range branch = act[L][best];
-        const uint64_t* cur = &alive[(size_t)L * W];
-        uint64_t* nxt = &alive[(size_t)(L + 1) * W];
+            if (c.act[L][j].count < c.act[L][best].count) best = j;
+        const Range branch = c.act[L][best];
+        const int W = c.W;
+        const uint64_t* cur = &c.alive[(size_t)L * W];
+        uint64_t* nxt = &c.alive[(size_t)(L + 1) * W];
+        const bool aligned = alignedAnd && &c == &local;
 
         for (int w = branch.first; w < branch.first + branch.words; w++) {
             for (uint64_t bits = cur[w]; bits; bits &= bits - 1) {
                 if (stopPass.load(std::memory_order_relaxed)) return;
                 const int v = 64 * w + ctz64(bits);
-                if (trackDeep) noteDeep(root, chosen, cand[v]);
-                const uint64_t* a = &adj[(size_t)v * W];
+                if (trackDeep) noteDeep(root, chosen, c.cand[v]);
+                const uint64_t* a = &c.adj[(size_t)v * W];
                 int n = 0, empties = 0;
                 const int allowed = nAct - need;
+                // Local matrix: W is a multiple of 4 and every row of it is 32-byte aligned, so
+                // the whole live set is ANDed with aligned AVX2 loads; the counts follow.
+                if (aligned)
+                    for (int u = 0; u < W; u += 4)
+                        _mm256_store_si256((__m256i*)(nxt + u), _mm256_and_si256(
+                            _mm256_load_si256((const __m256i*)(cur + u)), _mm256_load_si256((const __m256i*)(a + u))));
                 for (int j = 0; j < nAct && empties <= allowed; j++) {
                     if (j == best) continue;
-                    Range r = act[L][j];
-                    int c = 0;
-                    for (int u = r.first; u < r.first + r.words; u++) {
-                        nxt[u] = cur[u] & a[u];
-                        c += popcnt64(nxt[u]);
-                    }
-                    if (c) { r.count = c; act[L + 1][n++] = r; }
+                    Range r = c.act[L][j];
+                    int cnt = 0;
+                    if (aligned)
+                        for (int u = r.first; u < r.first + r.words; u++) cnt += popcnt64(nxt[u]);
+                    else
+                        for (int u = r.first; u < r.first + r.words; u++) {
+                            nxt[u] = cur[u] & a[u];
+                            cnt += popcnt64(nxt[u]);
+                        }
+                    if (cnt) { r.count = cnt; c.act[L + 1][n++] = r; }
                     else empties++;
                 }
                 if (empties > allowed) continue;
-                chosen.push_back(cand[v]);
-                dfs(L + 1, n, need - 1);
+                chosen.push_back(c.cand[v]);
+                atDepth[3 + chosen.size()]++;
+                dfs(c, L + 1, n, need - 1);
                 chosen.pop_back();
             }
         }
@@ -338,11 +482,11 @@ class Worker {
             int n = 0;
             for (int j = 0; j < nAct; j++) {
                 if (j == best) continue;
-                const Range& r = act[L][j];
+                const Range& r = c.act[L][j];
                 std::copy(cur + r.first, cur + r.first + r.words, nxt + r.first);
-                act[L + 1][n++] = r;
+                c.act[L + 1][n++] = r;
             }
-            dfs(L + 1, n, need);
+            dfs(c, L + 1, n, need);
         }
     }
 
@@ -377,31 +521,49 @@ class Worker {
         }
         if (nonEmpty < need) return;
 
-        W = words;
-        cand.assign((size_t)W * 64, nullptr);
-        adj.assign((size_t)W * 64 * W, 0);
-        alive.assign((size_t)W * (N + 2), 0);
-        if (act.size() < (size_t)N + 2) act.resize((size_t)N + 2);
+        top.W = words;
+        const int W = words;
+        top.cand.assign((size_t)W * 64, nullptr);
+        top.adj.assign((size_t)W * 64 * W, 0);
+        top.alive.assign((size_t)W * (N + 2), 0);
+        if (top.act.size() < (size_t)N + 2) top.act.resize((size_t)N + 2);
 
         for (size_t i = 0; i < local.size(); i++)
             for (size_t k = 0; k < local[i].size(); k++) {
                 const int b = 64 * ranges[i].first + (int)k;
-                cand[b] = local[i][k];
-                alive[b / 64] |= 1ULL << (b % 64);
+                top.cand[b] = local[i][k];
+                top.alive[b / 64] |= 1ULL << (b % 64);
             }
+        // Edge sets as bit masks: two matchings with a common edge are never compatible, which
+        // six ANDs decide before the cycle walk of compat.
+        using Edges = std::array<uint64_t, 16>;          // bit v*N+w for edge v-w, v < w; N <= 32
+        const int ew = (N * N + 63) / 64;
+        std::vector<std::vector<Edges>> edges(local.size());
+        for (size_t i = 0; i < local.size(); i++)
+            for (const Match* m : local[i]) {
+                Edges e{};
+                for (int v = 0; v < N; v++)
+                    if (m->at(v) > v) { const int b = v * N + m->at(v); e[b >> 6] |= 1ULL << (b & 63); }
+                edges[i].push_back(e);
+            }
+        const auto disjoint = [ew](const Edges& a, const Edges& b) {
+            uint64_t s = 0;
+            for (int w = 0; w < ew; w++) s |= a[w] & b[w];
+            return s == 0;
+        };
         for (size_t i = 0; i < local.size(); i++)
             for (size_t k = i + 1; k < local.size(); k++)
                 for (size_t x = 0; x < local[i].size(); x++)
                     for (size_t y = 0; y < local[k].size(); y++)
-                        if (compat(*local[i][x], *local[k][y])) {
+                        if ((!edgeFilter || disjoint(edges[i][x], edges[k][y])) && compat(*local[i][x], *local[k][y])) {
                             const int bx = 64 * ranges[i].first + (int)x;
                             const int by = 64 * ranges[k].first + (int)y;
-                            adj[(size_t)bx * W + by / 64] |= 1ULL << (by % 64);
-                            adj[(size_t)by * W + bx / 64] |= 1ULL << (bx % 64);
+                            top.adj[(size_t)bx * W + by / 64] |= 1ULL << (by % 64);
+                            top.adj[(size_t)by * W + bx / 64] |= 1ULL << (bx % 64);
                         }
 
-        for (int j = 0; j < nonEmpty; j++) act[0][j] = ranges[j];
-        dfs(0, nonEmpty, need);
+        for (int j = 0; j < nonEmpty; j++) top.act[0][j] = ranges[j];
+        dfs(top, 0, nonEmpty, need);
     }
 
 public:
@@ -410,9 +572,13 @@ public:
             const size_t i = nextJob.fetch_add(1);
             if (i >= jobs.size() || stopPass.load()) return;
             found = nodes = 0;
+            atDepth.fill(0);
+            atDepth[3] = 1;
             runJob(jobs[i]);
+            atDepth[rowsWanted] = found;
             totalFound += found;
             totalNodes += nodes;
+            for (int d = 3; d <= rowsWanted; d++) depthNodes[d] += atDepth[d];
             jobsDone++;
         }
     }
@@ -424,11 +590,16 @@ static void runPass(int threads) {
     jobsDone = 0;
     totalFound = 0;
     totalNodes = 0;
+    for (auto& d : depthNodes) d = 0;
     stopPass = false;
     running = threads;
     std::vector<std::thread> pool;
     for (int i = 0; i < threads; i++)
-        pool.emplace_back([] { auto w = std::make_unique<Worker>(); w->run(); running--; });
+        pool.emplace_back([] {
+            auto w = std::make_unique<Worker>();
+            w->run();
+            running--;
+        });
     const auto t0 = std::chrono::steady_clock::now();
     double lastPrint = 0;
     while (running.load() > 0) {
@@ -436,12 +607,49 @@ static void runPass(int threads) {
         const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         if (s - lastPrint >= 60) {
             lastPrint = s;
-            printf("  %.0f s: %zu of %zu jobs, found %llu\n", s, jobsDone.load(), jobs.size(),
-                (unsigned long long)totalFound.load());
+            printf("  %.0f s: %zu of %zu jobs, found %llu; %s\n", s, jobsDone.load(), jobs.size(),
+                (unsigned long long)totalFound.load(), depthLine().c_str());
             fflush(stdout);
         }
     }
     for (auto& t : pool) t.join();
+}
+
+// Read one class file written by writeClasses: its type, its number of rows and its records.
+static bool readClassFile(const char* path, std::string& type, int& rows, std::vector<ClassRecord>& out) {
+    FILE* f = fopen(path, "r");
+    if (!f) { printf("cannot read %s\n", path); return false; }
+    char t[64];
+    size_t n;
+    if (fscanf(f, "=== type %63s %zu class(es) with %d rows\n", t, &n, &rows) != 3) {
+        printf("%s: not a class file\n", path); fclose(f); return false;
+    }
+    type = t;
+    if (!type.empty() && type.back() == ':') type.pop_back();
+    for (size_t i = 0; i < n; i++) {
+        size_t idx;
+        unsigned long long aut;
+        if (fscanf(f, " #%zu |Aut| = %llu", &idx, &aut) != 2) { printf("%s: bad record\n", path); fclose(f); return false; }
+        ClassRecord c{ {}, aut };
+        for (int r = 0; r < rows; r++) {
+            Match m{};
+            int cnt = 0;
+            for (;;) {
+                int x, y;
+                if (fscanf(f, "%d %d", &x, &y) != 2) break;
+                m[x] = (int8_t)y; m[y] = (int8_t)x; cnt += 2;
+                int ch = fgetc(f);
+                while (ch == ' ') ch = fgetc(f);
+                if (ch == '\n' || ch == EOF) break;
+                ungetc(ch, f);
+            }
+            N = cnt;
+            c.rows.push_back(m);
+        }
+        out.push_back(c);
+    }
+    fclose(f);
+    return true;
 }
 
 // k18u1f merge out.txt in1.txt in2.txt ... : union of class files of one type and size, each class
@@ -452,41 +660,14 @@ static int mergeFiles(int argc, char** argv) {
     std::string type;
     int rows = -1;
     for (int a = 3; a < argc; a++) {
-        FILE* f = fopen(argv[a], "r");
-        if (!f) { printf("cannot read %s\n", argv[a]); return 3; }
-        char t[64];
-        size_t n;
+        std::string ts;
         int k;
-        if (fscanf(f, "=== type %63s %zu class(es) with %d rows\n", t, &n, &k) != 3) {
-            printf("%s: not a class file\n", argv[a]); return 3;
-        }
-        std::string ts(t);
-        if (!ts.empty() && ts.back() == ':') ts.pop_back();
+        std::vector<ClassRecord> in;
+        if (!readClassFile(argv[a], ts, k, in)) return 3;
         if (rows < 0) { type = ts; rows = k; }
         if (ts != type || k != rows) { printf("%s: type or rows differ from %s\n", argv[a], argv[3]); return 3; }
-        for (size_t i = 0; i < n; i++) {
-            size_t idx;
-            unsigned long long aut;
-            if (fscanf(f, " #%zu |Aut| = %llu", &idx, &aut) != 2) { printf("%s: bad record\n", argv[a]); return 3; }
-            ClassRecord c{ {}, aut };
-            for (int r = 0; r < k; r++) {
-                Match m{};
-                int cnt = 0;
-                for (;;) {
-                    int x, y;
-                    if (fscanf(f, "%d %d", &x, &y) != 2) break;
-                    m[x] = (int8_t)y; m[y] = (int8_t)x; cnt += 2;
-                    int ch = fgetc(f);
-                    while (ch == ' ') ch = fgetc(f);
-                    if (ch == '\n' || ch == EOF) break;
-                    ungetc(ch, f);
-                }
-                N = cnt;
-                c.rows.push_back(m);
-            }
+        for (const ClassRecord& c : in)
             if (have.insert(c.rows).second) all.push_back(c);
-        }
-        fclose(f);
     }
     if (rows < 0) { printf("no input files\n"); return 2; }
     if (!writeClasses(all, argv[2], type.c_str(), rows)) return 3;
@@ -495,7 +676,7 @@ static int mergeFiles(int argc, char** argv) {
     return 0;
 }
 
-int main(int argc, char** argv) {
+static int run(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "merge") {
         if (argc < 4) { printf("usage: k18u1f merge out.txt in1.txt [in2.txt ...]\n"); return 2; }
         return mergeFiles(argc, argv);
@@ -503,6 +684,7 @@ int main(int argc, char** argv) {
     if (argc < 3) {
         printf("usage: k18u1f N type [rows|max] [threads] [hold]        e.g. k18u1f 18 4.14\n"
                "       k18u1f N type max threads K first last          one shard of the K-row max pass\n"
+               "       k18u1f N type extend classes.txt [threads]       ways to add one row to each class\n"
                "       k18u1f merge out.txt in1.txt [in2.txt ...]\n");
         return 2;
     }
@@ -515,8 +697,9 @@ int main(int argc, char** argv) {
     bool ok = N >= 4 && N <= 32 && N % 2 == 0;
     for (int c : cycles) { sum += c; ok = ok && c >= 4 && c % 2 == 0; }
     maxMode = argc > 3 && std::string(argv[3]) == "max";
-    rowsWanted = argc > 3 && !maxMode ? atoi(argv[3]) : N - 1;
-    const int threads = argc > 4 ? atoi(argv[4]) : 8;
+    const bool extendMode = argc > 4 && std::string(argv[3]) == "extend";
+    rowsWanted = argc > 3 && !maxMode && !extendMode ? atoi(argv[3]) : N - 1;
+    const int threads = extendMode ? (argc > 5 ? atoi(argv[5]) : 8) : argc > 4 ? atoi(argv[4]) : 8;
     if (argc > 5) holdLimit = (size_t)atoll(argv[5]);
     if (!ok || sum != N || rowsWanted < 3 || rowsWanted > N - 1 || threads < 1) {
         printf("bad arguments: N even 4..32, type = even parts >= 4 summing to N, 3 <= rows <= N-1\n");
@@ -561,6 +744,50 @@ int main(int argc, char** argv) {
 
     size_t candidates = 0;
     for (const auto& p : parts) candidates += p.size();
+
+    if (extendMode) {
+        // k18u1f N type extend file.txt [threads]: for each class in the file, the number of
+        // matchings compatible with all its rows, i.e. of ways to add one more row.
+        std::string ftype;
+        int k;
+        std::vector<ClassRecord> in;
+        if (!readClassFile(argv[4], ftype, k, in)) return 3;
+        if (ftype != argv[2]) { printf("%s is type %s, not %s\n", argv[4], ftype.c_str(), argv[2]); return 2; }
+        std::vector<const Match*> all;
+        for (const auto& p : parts)
+            for (const Match& m : p) all.push_back(&m);
+        std::vector<uint64_t> ways(in.size(), 0);
+        std::atomic<size_t> next{0};
+        std::vector<std::thread> pool;
+        for (int t = 0; t < threads; t++)
+            pool.emplace_back([&] {
+                for (size_t i; (i = next.fetch_add(1)) < in.size();) {
+                    // Relabel so that the first two rows are R1 and R2; the candidates are then
+                    // exactly the matchings compatible with those two.
+                    const auto sigma = toStandard(in[i].rows[0], in[i].rows[1]);
+                    std::vector<Match> rest;
+                    for (int r = 2; r < k; r++) rest.push_back(applyPerm(sigma, in[i].rows[r]));
+                    for (const Match* c : all) {
+                        bool good = true;
+                        for (const Match& m : rest)
+                            if (!compat(*c, m)) { good = false; break; }
+                        ways[i] += good;
+                    }
+                }
+            });
+        for (auto& t : pool) t.join();
+        uint64_t total = 0;
+        size_t extendable = 0;
+        for (size_t i = 0; i < in.size(); i++) {
+            if (ways[i]) printf("  class #%zu: %llu ways to add a row\n", i + 1, (unsigned long long)ways[i]);
+            total += ways[i];
+            extendable += ways[i] > 0;
+        }
+        printf("RESULT K%d type %s, %d rows, %s: %zu of %zu classes extend to %d rows (%llu ways), %.1f s\n",
+            N, argv[2], k, argv[4], extendable, in.size(), k + 1, (unsigned long long)total, seconds());
+        return 0;
+    }
+
     const int need = rowsWanted - 2;            // rows still to place, the root among them
     if (maxMode || rowsWanted == N - 1) {
         // Orbits of all candidates under the symmetries of the fixed pair.
@@ -662,8 +889,8 @@ int main(int argc, char** argv) {
         const std::string name = "K" + std::to_string(N) + "_U1F_max_" + argv[2] + "_k" + std::to_string(K) +
             "_" + std::to_string(first) + "-" + std::to_string(last) + ".txt";
         if (!writeClasses(results.classes, name, argv[2], K)) return 3;
-        printf("RESULT K%d type %s, %d rows, jobs %zu-%zu of %zu: %zu classes, %.1f s, in %s\n", N, argv[2], K,
-            first, last, total, results.classes.size(), seconds(), name.c_str());
+        printf("RESULT K%d type %s, %d rows, jobs %zu-%zu of %zu: %zu classes, %.1f s, in %s; %s\n", N, argv[2], K,
+            first, last, total, results.classes.size(), seconds(), name.c_str(), depthLine().c_str());
         return 0;
     }
 
@@ -673,7 +900,7 @@ int main(int argc, char** argv) {
             rowsWanted = k;
             runPass(threads);
             const bool exists = totalFound.load() > 0;
-            printf("  %d rows: %s (%.1f s)\n", k, exists ? "exist" : "none", seconds());
+            printf("  %d rows: %s (%.1f s); %s\n", k, exists ? "exist" : "none", seconds(), depthLine().c_str());
             fflush(stdout);
             if (!exists) break;
             largest = k;
@@ -717,4 +944,11 @@ int main(int argc, char** argv) {
     printf("RESULT K%d type %s, %d rows: found %llu (nodes %llu, %.1f s)\n", N, argv[2], rowsWanted,
         (unsigned long long)totalFound.load(), (unsigned long long)totalNodes.load(), seconds());
     return 0;
+}
+
+// End of job, spoken as in Tt4: OK or not.
+int main(int argc, char** argv) {
+    const int code = run(argc, argv);
+    speak(code ? "Oops. k task error" : "k task exit ok");
+    return code;
 }
