@@ -444,9 +444,66 @@ static void runPass(int threads) {
     for (auto& t : pool) t.join();
 }
 
+// k18u1f merge out.txt in1.txt in2.txt ... : union of class files of one type and size, each class
+// once, sorted as a single run would write it. Classes are canonical, so equal classes have equal rows.
+static int mergeFiles(int argc, char** argv) {
+    std::set<std::vector<Match>> have;
+    std::vector<ClassRecord> all;
+    std::string type;
+    int rows = -1;
+    for (int a = 3; a < argc; a++) {
+        FILE* f = fopen(argv[a], "r");
+        if (!f) { printf("cannot read %s\n", argv[a]); return 3; }
+        char t[64];
+        size_t n;
+        int k;
+        if (fscanf(f, "=== type %63s %zu class(es) with %d rows\n", t, &n, &k) != 3) {
+            printf("%s: not a class file\n", argv[a]); return 3;
+        }
+        std::string ts(t);
+        if (!ts.empty() && ts.back() == ':') ts.pop_back();
+        if (rows < 0) { type = ts; rows = k; }
+        if (ts != type || k != rows) { printf("%s: type or rows differ from %s\n", argv[a], argv[3]); return 3; }
+        for (size_t i = 0; i < n; i++) {
+            size_t idx;
+            unsigned long long aut;
+            if (fscanf(f, " #%zu |Aut| = %llu", &idx, &aut) != 2) { printf("%s: bad record\n", argv[a]); return 3; }
+            ClassRecord c{ {}, aut };
+            for (int r = 0; r < k; r++) {
+                Match m{};
+                int cnt = 0;
+                for (;;) {
+                    int x, y;
+                    if (fscanf(f, "%d %d", &x, &y) != 2) break;
+                    m[x] = (int8_t)y; m[y] = (int8_t)x; cnt += 2;
+                    int ch = fgetc(f);
+                    while (ch == ' ') ch = fgetc(f);
+                    if (ch == '\n' || ch == EOF) break;
+                    ungetc(ch, f);
+                }
+                N = cnt;
+                c.rows.push_back(m);
+            }
+            if (have.insert(c.rows).second) all.push_back(c);
+        }
+        fclose(f);
+    }
+    if (rows < 0) { printf("no input files\n"); return 2; }
+    if (!writeClasses(all, argv[2], type.c_str(), rows)) return 3;
+    printf("RESULT merged %d files: type %s, %d rows, %zu classes, in %s\n", argc - 3, type.c_str(), rows,
+        all.size(), argv[2]);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "merge") {
+        if (argc < 4) { printf("usage: k18u1f merge out.txt in1.txt [in2.txt ...]\n"); return 2; }
+        return mergeFiles(argc, argv);
+    }
     if (argc < 3) {
-        printf("usage: k18u1f N type [rows|max] [threads] [hold]   e.g. k18u1f 18 4.14\n");
+        printf("usage: k18u1f N type [rows|max] [threads] [hold]        e.g. k18u1f 18 4.14\n"
+               "       k18u1f N type max threads K first last          one shard of the K-row max pass\n"
+               "       k18u1f merge out.txt in1.txt [in2.txt ...]\n");
         return 2;
     }
     N = atoi(argv[1]);
@@ -589,6 +646,26 @@ int main(int argc, char** argv) {
     printf("K%d type %s, %d rows: %zu candidates, %zu root jobs, %d threads\n",
         N, argv[2], rowsWanted, candidates, jobs.size(), threads);
     fflush(stdout);
+
+    if (maxMode && argc > 7) {
+        // One shard: every class with exactly K rows whose root is a job in [first, last).
+        // The shards of all jobs together give all K-row classes; merge them afterwards.
+        const int K = atoi(argv[5]);
+        const size_t total = jobs.size();
+        const size_t first = std::min((size_t)atoll(argv[6]), total);
+        const size_t last = std::min((size_t)atoll(argv[7]), total);
+        if (K < 3 || K > N - 1 || first >= last) { printf("bad shard: K 3..N-1, first < last\n"); return 2; }
+        jobs = std::vector<Job>(jobs.begin() + first, jobs.begin() + last);
+        rowsWanted = K;
+        collecting = true;
+        runPass(threads);
+        const std::string name = "K" + std::to_string(N) + "_U1F_max_" + argv[2] + "_k" + std::to_string(K) +
+            "_" + std::to_string(first) + "-" + std::to_string(last) + ".txt";
+        if (!writeClasses(results.classes, name, argv[2], K)) return 3;
+        printf("RESULT K%d type %s, %d rows, jobs %zu-%zu of %zu: %zu classes, %.1f s, in %s\n", N, argv[2], K,
+            first, last, total, results.classes.size(), seconds(), name.c_str());
+        return 0;
+    }
 
     if (maxMode) {
         int largest = 2;

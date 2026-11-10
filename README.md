@@ -55,6 +55,7 @@ runs: [`runs/K26/`](runs/K26/)
 [10.5281/zenodo.22548329](https://doi.org/10.5281/zenodo.22548329).
 
 **Uniform 1-factorizations:** all uniform 1-factorizations of K18 are perfect: no non-Hamiltonian cycle type exists, [10.5281/zenodo.24074760](https://doi.org/10.5281/zenodo.24074760).
+Program, run scripts and largest partial factorizations: [`runs/K18/K18U1F/`](runs/K18/K18U1F/).
 
 **Verification:** the same engine reproduces the known K14 classification (Dinitz and Garnick, 1996)
 and the K16 classes with |Aut| > 1 (Gill and Wanless, 2020):
