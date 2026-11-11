@@ -30,10 +30,12 @@ FOR /L %%F IN (%~3,%~5,%~4) DO (
   IF EXIST "!OUT!" (
     echo jobs %%F-!E!: done before
   ) ELSE (
-    echo jobs %%F-!E! started %DATE% %TIME%
+    echo jobs %%F-!E! started !DATE! !TIME!
+    SET "U1F_QUIET=1"
     start "K18U1F %T% k%K% %%F" /belownormal /wait /b "%EXE%" 18 %T% max 8 %K% %%F !E! >> "%LOG%" 2>&1
     IF NOT EXIST "!OUT!" echo jobs %%F-!E!: stopped, no result & exit /b 1
     findstr /C:"jobs %%F-!E!" "%LOG%"
   )
 )
+SET "U1F_QUIET="
 "%EXE%" merge "K18_U1F_max_%T%_k%K%.txt" %FILES%

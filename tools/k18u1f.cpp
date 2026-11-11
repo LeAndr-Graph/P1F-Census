@@ -946,9 +946,11 @@ static int run(int argc, char** argv) {
     return 0;
 }
 
-// End of job, spoken as in Tt4: OK or not.
+// End of job, spoken as in Tt4: OK or not. U1F_QUIET=1 turns it off (shards).
 int main(int argc, char** argv) {
     const int code = run(argc, argv);
-    speak(code ? "Oops. k task error" : "k task exit ok");
+    const char* quiet = std::getenv("U1F_QUIET");
+    if (!(quiet && *quiet && *quiet != '0'))
+        speak(code ? "Oops. k task error" : "k task exit ok");
     return code;
 }

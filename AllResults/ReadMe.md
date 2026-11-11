@@ -168,10 +168,10 @@ K26 23 and 36 (the two K26 legs). All six match their tables.
 
 ### K18 uniform partials
 
-`K18_U1F_max_<type>.txt`, six files: the largest partial uniform factorizations of K18 for one
+`K18_U1F_max_<type>.txt`, seven files: the largest partial uniform factorizations of K18 for one
 non-Hamiltonian cycle type, one record per isomorphism class. These are not P1F catalogs and are not
-counted among the eight above. `runs/K18/K18U1F/run_max.bat` checks its output against them; type
-4.14 has no file because its search did not finish.
+counted among the eight above. `runs/K18/K18U1F/run_max.bat` checks its output against six of them;
+4.14 (11 rows, 707 classes) comes from `run_max_shards.bat`, about 16 h.
 
 The merged K16 file was verified the same way as the deposited catalogues, on 2026-09-01: 89
 records numbered contiguously with no duplicates; every row a perfect matching, every edge once,

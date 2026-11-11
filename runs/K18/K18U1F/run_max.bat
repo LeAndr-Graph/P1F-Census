@@ -3,7 +3,7 @@ REM ============================================================================
 REM  runs\K18\K18U1F\run_max.bat -- largest partial factorization per cycle type,
 REM  every class at that size, each checked against its file in AllResults.
 REM  Types 4.4.4.6 4.6.8 4.4.10 6.6.6 8.10 6.12: about 30 min at 8 threads.
-REM  Type 4.14 is not included: its 12-row pass did not finish.
+REM  Type 4.14 (about 16 h) is not included: see run_max_shards.bat.
 REM ============================================================================
 SET "HERE=%~dp0"
 cd /d "%HERE%"

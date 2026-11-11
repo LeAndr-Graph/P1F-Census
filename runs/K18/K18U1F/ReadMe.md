@@ -50,23 +50,22 @@ byte for byte against `AllResults/K18_U1F_max_<type>.txt`, one record per isomor
 | 6.6.6 | 15 | 2 | 1 s |
 | 8.10 | 15 | 2 | 5 min |
 | 6.12 | 10 | 15 | 24 min |
-| 4.14 | 11 or more | not finished | |
+| 4.14 | 11 | 707 | 16 h, in shards |
 
 **Long runs.** `run_max_shards.bat TYPE K FIRST LAST STEP` runs the K-row pass in shards of STEP root
 jobs, one process each, and merges them when all are done. It can be stopped at any time: run the
 same command again and finished shards are skipped. For 4.14:
 
     run_max_shards.bat 4.14 12 0 3443 20
+    run_max_shards.bat 4.14 11 0 3443 20
 
-Any class in the merged file means 12 rows exist; then run K = 13 the same way. If K = 12 gives
-none, the largest is 11, and the same command with K = 11 collects all classes at 11 rows. Shards
-of a finished type merge to exactly its file in `AllResults`. The 12-row pass of 4.14 takes about
-30 h at 8 threads.
+The 12-row pass finds no class (5.4 h at 8 threads), so the largest is 11; the 11-row pass then
+collects all 707 classes at 11 rows (10.5 h), `AllResults/K18_U1F_max_4.14.txt`. Shards of a
+finished type merge to exactly its file in `AllResults`.
 
 **Extending a file.** `k18u1f 18 <type> extend <file>` counts, for each class in a class file, the
 matchings compatible with all its rows, that is, the ways to add one more row. Every file in
-`AllResults` gives 0, as a largest partial must. For 4.14, none of the 473 classes with 11 rows
-from root jobs 0 to 8 extends to 12 rows.
+`AllResults` gives 0, as a largest partial must; for the 707 classes of 4.14 this takes 1.5 s.
 
 **Branch counts.** Every progress and RESULT line ends with `rows 3..K: n3 ... nK`: how many
 branches of the pass held 3, 4, ... K rows, with nK the number found. They show where the search
