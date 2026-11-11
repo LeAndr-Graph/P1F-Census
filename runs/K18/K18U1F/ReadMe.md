@@ -38,11 +38,11 @@ and nothing for K16 4.12, 6.10, 8.8, 4.4.8, 4.6.6 and K14 4.10, 6.8, 4.4.6.
 
 ## Largest partial factorizations
 
-A partial with k rows is k pairwise edge-disjoint perfect matchings of K18, every two of which
+A partial is a set of pairwise edge-disjoint perfect matchings of K18 (rows), every two of which
 have the cycle type. `run_max.bat` runs `k18u1f 18 <type> max` per type and checks each output
 byte for byte against `AllResults/K18_U1F_max_<type>.txt`, one record per isomorphism class with |Aut|.
 
-| type | largest k | classes | time |
+| type | rows | classes | time |
 |---|---:|---:|---:|
 | 4.4.4.6 | 7 | 5 | 1 s |
 | 4.6.8 | 7 | 239 | 3 s |

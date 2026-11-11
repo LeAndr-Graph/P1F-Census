@@ -93,7 +93,8 @@ static Match R1, R2;
 
 // True when the union of a and b has exactly the required cycle type. A shared edge is a cycle
 // of length 2, which no type contains, so edge-disjointness needs no separate test.
-static bool compat(const Match& a, const Match& b) {
+// Walk version: follows each cycle of the union.
+static bool compatWalk(const Match& a, const Match& b) {
     uint64_t got = 0;
     uint32_t seen = 0;
     while (seen != allVerts) {
@@ -107,6 +108,55 @@ static bool compat(const Match& a, const Match& b) {
         got += 1ULL << (4 * (len / 2 - 1));
     }
     return got == typeKey;
+}
+
+// Power version, branch-free AVX2. p = b o a maps each cycle of length 2L of the union to two
+// cycles of length L, and a shared edge to two fixed points. The cycle lengths of p, and so the
+// type of the union, are fixed by the number of fixed points of p^d for every divisor d of the
+// lcm of the L: fix(p^d) = sum of the cycle lengths 2L of the type with L | d. powDiv / powReq
+// list those d (ascending) and the counts; filled in run() from the type.
+static std::vector<int> powDiv, powReq;
+static uint32_t laneMask;
+static __m256i laneId;
+
+// r[x] = t[i[x]] for 32 byte lanes, indices 0..31 (vpshufb works on 16-byte halves).
+static inline __m256i lookup32(__m256i t, __m256i i) {
+    const __m256i lo = _mm256_permute2x128_si256(t, t, 0x00), hi = _mm256_permute2x128_si256(t, t, 0x11);
+    const __m256i sel = _mm256_slli_epi16(i, 3);             // bit 4 of each index -> bit 7
+    return _mm256_blendv_epi8(_mm256_shuffle_epi8(lo, i), _mm256_shuffle_epi8(hi, i), sel);
+}
+
+static bool compatPow(const Match& a, const Match& b) {
+    const __m256i A = _mm256_loadu_si256((const __m256i*)a.data());
+    const __m256i B = _mm256_loadu_si256((const __m256i*)b.data());
+    __m256i pw[9];                                          // pw[j] = p^(2^j)
+    pw[0] = lookup32(B, A);
+    int have = 1;
+    for (size_t k = 0; k < powDiv.size(); k++) {
+        const int d = powDiv[k];
+        while ((1 << have) <= d) { pw[have] = lookup32(pw[have - 1], pw[have - 1]); have++; }
+        __m256i r = _mm256_setzero_si256();
+        bool first = true;
+        for (int j = 0; (1 << j) <= d; j++)
+            if ((d >> j) & 1) { r = first ? pw[j] : lookup32(r, pw[j]); first = false; }
+        const uint32_t fix = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(r, laneId)) & laneMask;
+        if (popcnt64(fix) != powReq[k]) return false;
+    }
+    return true;
+}
+
+// Env U1F_WALK uses the walk; U1F_CHECKPOW computes both and stops on any difference.
+static const bool useWalk = getenv("U1F_WALK") != nullptr;
+static const bool checkPow = getenv("U1F_CHECKPOW") != nullptr;
+static std::atomic<uint64_t> powChecked{0};
+static bool compat(const Match& a, const Match& b) {
+    if (checkPow) {
+        const bool w = compatWalk(a, b), p = compatPow(a, b);
+        if (w != p) { printf("internal error: compatPow %d, compatWalk %d\n", (int)p, (int)w); exit(3); }
+        powChecked.fetch_add(1, std::memory_order_relaxed);
+        return w;
+    }
+    return useWalk ? compatWalk(a, b) : compatPow(a, b);
 }
 
 // All matchings containing edge 0-p, compatible with rows 1 and 2.
@@ -173,6 +223,12 @@ static bool maxMode = false, collecting = false;
 static const int localMax = getenv("U1F_LOCAL") ? atoi(getenv("U1F_LOCAL")) : 4096;
 // Edge-overlap test before compat when a job's matrix is built; env U1F_NOEDGE switches it off.
 static const bool edgeFilter = getenv("U1F_NOEDGE") == nullptr;
+// Diagnostic, env U1F_POOLSTAT=s: per job, print the size of the root's kept list and, for up to s
+// candidates of its smallest group, the pool they would leave (kept candidates compatible with
+// both), then skip the search. Measures whether a second fixed row (as rows 4/5 in k18p1f) pays.
+static const int poolStat = getenv("U1F_POOLSTAT") ? atoi(getenv("U1F_POOLSTAT")) : 0;
+// Diagnostic, env U1F_BUILDONLY: print each job's matrix build time and skip its search.
+static const bool buildOnly = getenv("U1F_BUILDONLY") != nullptr;
 // Aligned AVX2 AND over the whole local matrix (W padded to 4 words). Measured no faster on 4.14,
 // 12 rows, jobs 500-516 (233/249 s against 231/237 s): the matrix is in cache. Off; /D U1F_ALIGNED_AND=1 to try.
 #ifndef U1F_ALIGNED_AND
@@ -340,6 +396,17 @@ struct Ctx {
     Bits alive;                                 // W words per level
     std::vector<std::array<Range, 32>> act;     // active rows per level
 };
+
+// In-place transpose of a 64 x 64 bit tile, bit c of word r = entry (r, c).
+static void transpose64(uint64_t a[64]) {
+    uint64_t m = 0x00000000FFFFFFFFULL;
+    for (int j = 32; j; j >>= 1, m ^= m << j)
+        for (int k = 0; k < 64; k = ((k | j) + 1) & ~j) {
+            const uint64_t t = ((a[k] >> j) ^ a[k | j]) & m;
+            a[k | j] ^= t;
+            a[k] ^= t << j;
+        }
+}
 
 static inline void putBits(uint64_t* dst, int p, uint64_t bits, int k) {
     dst[p >> 6] |= bits << (p & 63);
@@ -521,6 +588,36 @@ class Worker {
         }
         if (nonEmpty < need) return;
 
+        if (poolStat > 0) {
+            size_t K = 0, sg = 0;                    // sg: the smallest group ("small" is a Windows macro)
+            for (size_t i = 0; i < local.size(); i++) {
+                K += local[i].size();
+                if (local[i].size() < local[sg].size()) sg = i;
+            }
+            const size_t g = local[sg].size(), step = std::max<size_t>(1, g / (size_t)poolStat);
+            double sum = 0, sumSq = 0;
+            size_t n = 0, minPool = SIZE_MAX, maxPool = 0;
+            for (size_t x = 0; x < g; x += step) {
+                size_t pool = 0;
+                for (size_t i = 0; i < local.size(); i++)
+                    if (i != sg)
+                        for (const Match* m : local[i]) pool += compat(*local[sg][x], *m);
+                sum += (double)pool;
+                sumSq += (double)pool * pool;
+                minPool = std::min(minPool, pool);
+                maxPool = std::max(maxPool, pool);
+                n++;
+            }
+            const double full = (double)K * K / 2, pair = (double)g * (sumSq / n) / 2 + (double)g * K;
+            printf("POOLSTAT job orbit %d: kept %zu in %d groups, smallest group %zu; pool over %zu samples:"
+                " avg %.0f min %zu max %zu (%.2f%% of kept); tests full matrix %.3g, pair scheme %.3g (x%.2f);"
+                " memory full %.0f MB, pair bit sets %.0f MB\n",
+                job.orbit, K, nonEmpty, g, n, sum / n, minPool, maxPool, 100.0 * sum / n / K, full, pair,
+                pair / full, (double)K * K / 8 / 1048576, (double)g * K / 8 / 1048576);
+            return;
+        }
+
+        const auto buildStart = std::chrono::steady_clock::now();
         top.W = words;
         const int W = words;
         top.cand.assign((size_t)W * 64, nullptr);
@@ -551,18 +648,52 @@ class Worker {
             for (int w = 0; w < ew; w++) s |= a[w] & b[w];
             return s == 0;
         };
+        // The candidates of each group copied into one contiguous block, so the inner loop streams
+        // through memory instead of following pointers into the global lists.
+        std::vector<std::vector<Match>> flat(local.size());
+        for (size_t i = 0; i < local.size(); i++)
+            for (const Match* m : local[i]) flat[i].push_back(*m);
+        const bool powOnly = !useWalk && !checkPow;      // the power test needs no edge prefilter
         for (size_t i = 0; i < local.size(); i++)
             for (size_t k = i + 1; k < local.size(); k++)
-                for (size_t x = 0; x < local[i].size(); x++)
-                    for (size_t y = 0; y < local[k].size(); y++)
-                        if ((!edgeFilter || disjoint(edges[i][x], edges[k][y])) && compat(*local[i][x], *local[k][y])) {
-                            const int bx = 64 * ranges[i].first + (int)x;
-                            const int by = 64 * ranges[k].first + (int)y;
-                            top.adj[(size_t)bx * W + by / 64] |= 1ULL << (by % 64);
-                            top.adj[(size_t)by * W + bx / 64] |= 1ULL << (bx % 64);
-                        }
+                for (size_t x = 0; x < flat[i].size(); x++) {
+                    const Match& mx = flat[i][x];
+                    uint64_t* row = &top.adj[(size_t)(64 * ranges[i].first + x) * W + ranges[k].first];
+                    const size_t n = flat[k].size();
+                    for (size_t y0 = 0; y0 < n; y0 += 64) {
+                        uint64_t acc = 0;
+                        const size_t y1 = std::min(n, y0 + 64);
+                        if (powOnly)
+                            for (size_t y = y0; y < y1; y++) acc |= (uint64_t)compatPow(mx, flat[k][y]) << (y - y0);
+                        else
+                            for (size_t y = y0; y < y1; y++)
+                                if ((!edgeFilter || disjoint(edges[i][x], edges[k][y])) && compat(mx, flat[k][y]))
+                                    acc |= 1ULL << (y - y0);
+                        row[y0 / 64] = acc;
+                    }
+                }
+        // Only the rows of the earlier group were written, in order. The mirror half is filled by
+        // transposing 64 x 64 tiles (groups start on word boundaries), instead of one scattered
+        // write per compatible pair, which in a matrix of GBs misses the cache every time.
+        for (size_t i = 0; i < local.size(); i++)
+            for (size_t k = i + 1; k < local.size(); k++)
+                for (int rw = ranges[i].first; rw < ranges[i].first + ranges[i].words; rw++)
+                    for (int cw = ranges[k].first; cw < ranges[k].first + ranges[k].words; cw++) {
+                        uint64_t tile[64];
+                        for (int t = 0; t < 64; t++) tile[t] = top.adj[(size_t)(64 * rw + t) * W + cw];
+                        transpose64(tile);
+                        for (int t = 0; t < 64; t++) top.adj[(size_t)(64 * cw + t) * W + rw] = tile[t];
+                    }
 
         for (int j = 0; j < nonEmpty; j++) top.act[0][j] = ranges[j];
+        if (buildOnly) {                        // diagnostic: time the matrix build, skip the search
+            size_t K = 0;
+            for (const auto& g : local) K += g.size();
+            printf("BUILD job orbit %d: kept %zu, matrix %.0f MB, %.1f s\n", job.orbit, K,
+                (double)top.adj.size() * 8 / 1048576,
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - buildStart).count());
+            return;
+        }
         dfs(top, 0, nonEmpty, need);
     }
 
@@ -707,6 +838,23 @@ static int run(int argc, char** argv) {
     }
 
     allVerts = N == 32 ? 0xFFFFFFFFu : (1u << N) - 1;
+    {   // fixed-point counts of the powers of b o a that decide the type (see compatPow)
+        laneMask = allVerts;
+        alignas(32) int8_t id[32];
+        for (int i = 0; i < 32; i++) id[i] = (int8_t)i;
+        laneId = _mm256_load_si256((const __m256i*)id);
+        int l = 1;
+        for (int c : cycles) l = std::lcm(l, c / 2);
+        powDiv.clear();
+        powReq.clear();
+        for (int d = 1; d <= l; d++)
+            if (l % d == 0) {
+                int req = 0;
+                for (int c : cycles) if (d % (c / 2) == 0) req += c;
+                powDiv.push_back(d);
+                powReq.push_back(req);
+            }
+    }
     int v = 0;
     for (int c : cycles) {
         typeLens |= 1u << (c / 2);
