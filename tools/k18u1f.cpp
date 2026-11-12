@@ -26,6 +26,8 @@
 //
 //   k18u1f N type max threads K first last      one shard: the K-row pass for root jobs [first, last)
 //   k18u1f N type extend classes.txt [threads]  for each class, the ways to add one more row
+//   k18u1f N type continue threads f1 [f2 ...]  complete each class (e.g. U1F_SMALLKEEP starters,
+//                                               .txt or .part) to N-1 rows; see runContinue
 //   k18u1f merge out.txt in1.txt [in2.txt ...]   union of shard files, as a single run writes it
 //
 // Every pass line and RESULT line ends with "rows 3..K: n3 ... nK", the number of branches that
@@ -46,6 +48,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -215,7 +218,23 @@ struct Job { const Match* root; int firstPart; int orbit = 0; };
 static std::vector<std::vector<Match>> parts;   // sorted by size
 static std::vector<std::vector<int>> orbitOf;   // max mode: orbit number of each candidate
 static std::vector<Job> jobs;
+static size_t jobBase = 0;                      // a shard's first job, so progress shows global numbers
 static int rowsWanted;
+
+// What each thread is doing, for the progress lines: phase 0 idle, 1 building the job's matrix,
+// 2 searching, in branch x of the n candidates of the first row chosen after the root; deep is
+// the most rows any branch of the current job has held so far.
+struct ThreadStatus {
+    std::atomic<int> phase{0}, job{0}, x{0}, n{0}, deep{0};
+    // The running job's branch counts per number of rows, published every 4096 nodes, so the
+    // progress line can show live counts; zeroed when the job's counts move to depthNodes.
+    std::array<std::atomic<uint64_t>, 33> depth{};
+    std::atomic<long long> since{0};
+};
+static constexpr int kMaxThreads = 64;
+// Per-thread lines under each progress line (job, branch x of n, deepest rows): env U1F_THREADLINES=1.
+static const bool threadLines = getenv("U1F_THREADLINES") != nullptr;
+static ThreadStatus threadStatus[kMaxThreads];
 static bool maxMode = false, collecting = false;
 // A subtree whose live candidates number at most localMax is searched on its own small matrix,
 // which fits in cache. 4096 measured best on 4.14, 12 rows, jobs 1000-1008: 44.5 s, against 92 s
@@ -229,6 +248,28 @@ static const bool edgeFilter = getenv("U1F_NOEDGE") == nullptr;
 static const int poolStat = getenv("U1F_POOLSTAT") ? atoi(getenv("U1F_POOLSTAT")) : 0;
 // Diagnostic, env U1F_BUILDONLY: print each job's matrix build time and skip its search.
 static const bool buildOnly = getenv("U1F_BUILDONLY") != nullptr;
+// Subset search, env U1F_CYCLE4FIRST: keep only the candidates m with vertex 0 on a 4-cycle of
+// R1 u m (types with a 4-cycle). Not a complete search: a factorization's rows need not all have
+// that property. Orbits then use only the pair symmetries fixing vertex 0 and R1, and the output
+// files are tagged "_c4first".
+static const bool cycle4First = getenv("U1F_CYCLE4FIRST") != nullptr;
+// Fixed-rows existence test, env U1F_FIXEDROWS with rows < N-1 (not max): only the rows-2 partner
+// rows with the fewest candidates are kept, so each job's matrix holds only their candidates. Every
+// full factorization has a row for every partner of vertex 0, so 0 found proves that none exists;
+// a find proves nothing. Roots: every candidate of the smallest kept row (no symmetry used); the
+// pass stops at the first find. Env U1F_JOBS="first last" runs only root jobs [first, last).
+static const bool fixedRows = getenv("U1F_FIXEDROWS") != nullptr;
+// Per-job existence test in a max shard (k18u1f N type max threads K first last), env U1F_SMALLROWS:
+// each job keeps only the K-3 rows with the fewest candidates kept for its root, so its matrix
+// holds only those. A U1F rooted at the job has a row in each of them, so a job with no K-row
+// partial there has no U1F; a job with one prints "HIT job j" (the full 19-row search must decide
+// it). Each job stops at its first find; nothing is collected. Files are tagged "_small".
+static const bool smallRows = getenv("U1F_SMALLROWS") != nullptr;
+// With U1F_SMALLROWS, env U1F_SMALLKEEP: do not stop a job at its first find; keep every K-row
+// partial found, one record per isomorphism class with |Aut|, in the "_small" file (starters for a
+// second pass that extends them to N-1 rows).
+static const bool smallKeep = smallRows && getenv("U1F_SMALLKEEP") != nullptr;
+static std::atomic<size_t> jobsHit{0};
 // Aligned AVX2 AND over the whole local matrix (W padded to 4 words). Measured no faster on 4.14,
 // 12 rows, jobs 500-516 (233/249 s against 231/237 s): the matrix is in cache. Off; /D U1F_ALIGNED_AND=1 to try.
 #ifndef U1F_ALIGNED_AND
@@ -242,9 +283,15 @@ static std::atomic<uint64_t> totalFound{0}, totalNodes{0};
 static std::array<std::atomic<uint64_t>, 33> depthNodes;   // branches that reached d rows
 
 // "rows 3..K: n3 n4 ... nK", the number of branches of this pass that held d rows; nK = found.
-static std::string depthLine() {
+// With live = true (progress lines), the running jobs' published counts are added.
+static std::string depthLine(bool live = false) {
     std::string s = "rows 3.." + std::to_string(rowsWanted) + ":";
-    for (int d = 3; d <= rowsWanted; d++) s += " " + std::to_string(depthNodes[d].load());
+    for (int d = 3; d <= rowsWanted; d++) {
+        uint64_t n = depthNodes[d].load();
+        if (live)
+            for (const auto& t : threadStatus) n += t.depth[d].load(std::memory_order_relaxed);
+        s += " " + std::to_string(n);
+    }
     return s;
 }
 
@@ -329,6 +376,104 @@ static void addPartial(const std::vector<const Match*>& input) {
     const Hash key = sortAndHash(P);
     std::lock_guard<std::mutex> g(results.lock);
     addClass(results, P, key);
+}
+
+// U1F_SMALLKEEP store: only the hash of each class's canonical form is kept (not of all its
+// images), so memory stays small. Each new class is appended at once to <file>.part as one line
+// "aut m0[0..N) m1[0..N) ...", and each finished job to <file>.done; a restarted shard reads both,
+// skips the finished jobs and re-runs an interrupted one, whose classes are then already known.
+static std::mutex smallLock;
+static std::set<Hash> smallSeen;
+static std::vector<ClassRecord> smallClasses;
+static std::set<size_t> smallDoneJobs;
+static FILE* smallPart = nullptr;
+static FILE* smallDone = nullptr;
+
+static void addSmall(const std::vector<const Match*>& input) {
+    std::vector<Match> P;
+    for (const Match* m : input) P.push_back(*m);
+    // Canonical form: the least image over all maps taking two rows to (R1, R2), then the pair group.
+    std::vector<Match> best, Q(P.size());
+    for (size_t a = 0; a < P.size(); a++)
+        for (size_t b = 0; b < P.size(); b++) {
+            if (a == b) continue;
+            const auto sigma = toStandard(P[a], P[b]);
+            for (const auto& h : pairGroup) {
+                std::array<int8_t, 32> perm{};
+                for (int v = 0; v < N; v++) perm[v] = h[sigma[v]];
+                for (size_t r = 0; r < P.size(); r++) Q[r] = applyPerm(perm, P[r]);
+                std::sort(Q.begin(), Q.end());
+                if (best.empty() || Q < best) best = Q;
+            }
+        }
+    const Hash key = sortAndHash(best);
+    {
+        std::lock_guard<std::mutex> g(smallLock);
+        if (!smallSeen.insert(key).second) return;
+    }
+    // New class: |Aut| = maps / distinct images.
+    std::set<Hash> images;
+    uint64_t maps = 0;
+    for (size_t a = 0; a < best.size(); a++)
+        for (size_t b = 0; b < best.size(); b++) {
+            if (a == b) continue;
+            const auto sigma = toStandard(best[a], best[b]);
+            for (const auto& h : pairGroup) {
+                std::array<int8_t, 32> perm{};
+                for (int v = 0; v < N; v++) perm[v] = h[sigma[v]];
+                for (size_t r = 0; r < best.size(); r++) Q[r] = applyPerm(perm, best[r]);
+                images.insert(sortAndHash(Q));
+                maps++;
+            }
+        }
+    std::lock_guard<std::mutex> g(smallLock);
+    smallClasses.push_back({ best, maps / images.size() });
+    if (smallPart) {
+        fprintf(smallPart, "%llu", (unsigned long long)(maps / images.size()));
+        for (const Match& m : best)
+            for (int v = 0; v < N; v++) fprintf(smallPart, " %d", (int)m[v]);
+        fprintf(smallPart, "\n");
+        fflush(smallPart);
+    }
+}
+
+// Restore a shard's .part and .done files (if any) and open them for appending.
+static void openSmall(const std::string& name, int rows) {
+    bool needNewline = false;
+    if (FILE* f = fopen((name + ".part").c_str(), "r")) {
+        static char line[16384];
+        while (fgets(line, sizeof line, f)) {
+            const size_t len = strlen(line);
+            needNewline = len == 0 || line[len - 1] != '\n';
+            if (needNewline) break;             // a line cut by the stop: dropped, found again
+            ClassRecord c{ {}, 0 };
+            char* p = line;
+            char* end;
+            c.aut = strtoull(p, &end, 10);
+            bool ok = end != p;
+            for (int r = 0; r < rows && ok; r++) {
+                Match m{};
+                for (int v = 0; v < N && ok; v++) {
+                    p = end;
+                    const long x = strtol(p, &end, 10);
+                    ok = end != p && x >= 0 && x < N;
+                    m[v] = (int8_t)x;
+                }
+                c.rows.push_back(m);
+            }
+            if (ok && smallSeen.insert(sortAndHash(c.rows)).second) smallClasses.push_back(c);
+        }
+        fclose(f);
+    }
+    if (FILE* f = fopen((name + ".done").c_str(), "r")) {
+        for (size_t j; fscanf(f, "%zu", &j) == 1;) smallDoneJobs.insert(j);
+        fclose(f);
+    }
+    if (!smallClasses.empty() || !smallDoneJobs.empty())
+        printf("resumed: %zu classes, %zu jobs done before\n", smallClasses.size(), smallDoneJobs.size());
+    smallPart = fopen((name + ".part").c_str(), "a");
+    if (smallPart && needNewline) fprintf(smallPart, "\n");
+    smallDone = fopen((name + ".done").c_str(), "a");
 }
 
 // Keep the rows-so-far if they are at least as deep as anything seen, up to holdLimit classes.
@@ -419,8 +564,10 @@ class Worker {
     std::vector<int> global;                    // local bit -> bit in top
     std::vector<const Match*> chosen;
     const Match* root = nullptr;
+    ThreadStatus* status = nullptr;             // progress of this thread's job, for printThreads
     uint64_t found = 0, nodes = 0;
     std::array<uint64_t, 33> atDepth{};
+    bool jobStop = false;                       // U1F_SMALLROWS: this job has a find, stop it
 
     void collectAll(Ctx& c, int L, int nAct) {
         std::vector<const Match*> rows = { &R1, &R2, root };
@@ -431,7 +578,8 @@ class Worker {
             for (int w = r.first; w < r.first + r.words; w++)
                 for (uint64_t bits = c.alive[(size_t)L * c.W + w]; bits; bits &= bits - 1) {
                     rows.back() = c.cand[64 * w + ctz64(bits)];
-                    addPartial(rows);
+                    if (smallKeep) addSmall(rows);
+                    else addPartial(rows);
                     found++;
                 }
         }
@@ -488,22 +636,30 @@ class Worker {
 
     // c.act[L][0..nAct) are rows with at least one candidate; nAct >= need >= 1.
     void dfs(Ctx& c, int L, int nAct, int need) {
+        if (jobStop) return;
         if (&c == &top && localMax > 0) {
             int live = 0;
             for (int j = 0; j < nAct && live <= localMax; j++) live += c.act[L][j].count;
             if (live <= localMax) { compact(L, nAct); dfs(local, 0, nAct, need); return; }
         }
         nodes++;
+        if (status && (nodes & 4095) == 0) {    // live counts for the progress line
+            for (int d = 3; d < rowsWanted; d++) status->depth[d].store(atDepth[d], std::memory_order_relaxed);
+            status->depth[rowsWanted].store(found, std::memory_order_relaxed);
+        }
         if (need == 1) {
             if (collecting) { collectAll(c, L, nAct); return; }
             for (int j = 0; j < nAct; j++) found += c.act[L][j].count;
-            if (maxMode) stopPass = true;
+            if (smallRows) jobStop = true;
+            else if (maxMode || fixedRows) stopPass = true;
             return;
         }
         int best = 0;
         for (int j = 1; j < nAct; j++)
             if (c.act[L][j].count < c.act[L][best].count) best = j;
         const Range branch = c.act[L][best];
+        const bool firstRow = chosen.empty() && status && status->n.load() == 0;
+        if (firstRow) { status->x = 0; status->n = branch.count; }
         const int W = c.W;
         const uint64_t* cur = &c.alive[(size_t)L * W];
         uint64_t* nxt = &c.alive[(size_t)(L + 1) * W];
@@ -511,7 +667,8 @@ class Worker {
 
         for (int w = branch.first; w < branch.first + branch.words; w++) {
             for (uint64_t bits = cur[w]; bits; bits &= bits - 1) {
-                if (stopPass.load(std::memory_order_relaxed)) return;
+                if (jobStop || stopPass.load(std::memory_order_relaxed)) return;
+                if (firstRow) status->x.fetch_add(1, std::memory_order_relaxed);
                 const int v = 64 * w + ctz64(bits);
                 if (trackDeep) noteDeep(root, chosen, c.cand[v]);
                 const uint64_t* a = &c.adj[(size_t)v * W];
@@ -540,6 +697,8 @@ class Worker {
                 if (empties > allowed) continue;
                 chosen.push_back(c.cand[v]);
                 atDepth[3 + chosen.size()]++;
+                if (status && 3 + (int)chosen.size() > status->deep.load(std::memory_order_relaxed))
+                    status->deep = 3 + (int)chosen.size();
                 dfs(c, L + 1, n, need - 1);
                 chosen.pop_back();
             }
@@ -587,6 +746,23 @@ class Worker {
             local.push_back(std::move(keep));
         }
         if (nonEmpty < need) return;
+        if (smallRows && maxMode && (int)local.size() > need) {
+            std::vector<size_t> ord(local.size());
+            std::iota(ord.begin(), ord.end(), 0);
+            std::stable_sort(ord.begin(), ord.end(),
+                [&](size_t a, size_t b) { return local[a].size() < local[b].size(); });
+            std::vector<std::vector<const Match*>> keepRows;
+            ranges.clear();
+            words = 0;
+            for (int j = 0; j < need; j++) {
+                keepRows.push_back(std::move(local[ord[j]]));
+                const int w = (int)(keepRows.back().size() + 63) / 64;
+                ranges.push_back({ words, w, (int)keepRows.back().size() });
+                words += w;
+            }
+            local = std::move(keepRows);
+            nonEmpty = need;
+        }
 
         if (poolStat > 0) {
             size_t K = 0, sg = 0;                    // sg: the smallest group ("small" is a Windows macro)
@@ -686,6 +862,7 @@ class Worker {
                     }
 
         for (int j = 0; j < nonEmpty; j++) top.act[0][j] = ranges[j];
+        if (status) status->phase = 2;
         if (buildOnly) {                        // diagnostic: time the matrix build, skip the search
             size_t K = 0;
             for (const auto& g : local) K += g.size();
@@ -698,25 +875,69 @@ class Worker {
     }
 
 public:
-    void run() {
+    void run(int tid) {
+        status = tid < kMaxThreads ? &threadStatus[tid] : nullptr;
         for (;;) {
             const size_t i = nextJob.fetch_add(1);
-            if (i >= jobs.size() || stopPass.load()) return;
+            if (i >= jobs.size() || stopPass.load()) { if (status) status->phase = 0; return; }
+            if (smallKeep && smallDoneJobs.count(i + jobBase)) { jobsDone++; continue; }
             found = nodes = 0;
+            jobStop = false;
             atDepth.fill(0);
             atDepth[3] = 1;
+            if (status) {
+                status->job = (int)(i + jobBase);
+                status->x = status->n = 0;
+                status->deep = 3;
+                status->since = std::chrono::steady_clock::now().time_since_epoch().count();
+                status->phase = 1;
+            }
             runJob(jobs[i]);
             atDepth[rowsWanted] = found;
             totalFound += found;
+            if (smallRows && found) {
+                jobsHit++;
+                printf("HIT job %zu\n", i + jobBase);
+                fflush(stdout);
+            }
+            if (smallKeep && smallDone) {
+                std::lock_guard<std::mutex> g(smallLock);
+                fprintf(smallDone, "%zu\n", i + jobBase);
+                fflush(smallDone);
+            }
             totalNodes += nodes;
+            if (status)                         // first unpublish, then add: never counted twice
+                for (auto& d : status->depth) d.store(0, std::memory_order_relaxed);
             for (int d = 3; d <= rowsWanted; d++) depthNodes[d] += atDepth[d];
             jobsDone++;
         }
     }
 };
 
-// Run all jobs for the current rowsWanted on `threads` threads, with a progress line each minute.
+// Run all jobs for the current rowsWanted on `threads` threads, with a progress line each minute,
+// followed by one line per thread: its job, and how far it is (building the job's matrix, or the
+// branch of the first chosen row it is in, x of n).
+static void printThreads(int threads) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    for (int t = 0; t < threads && t < kMaxThreads; t++) {
+        const ThreadStatus& s = threadStatus[t];
+        const int phase = s.phase.load();
+        if (phase == 0) continue;
+        const double sec = (double)(now - s.since.load()) * std::chrono::steady_clock::period::num /
+            std::chrono::steady_clock::period::den;
+        if (phase == 1)
+            printf("    thread %d: job %d, building its matrix, %.0f s\n", t, s.job.load(), sec);
+        else
+            printf("    thread %d: job %d, branch %d of %d, deepest %d rows, %.0f s\n", t, s.job.load(), s.x.load(),
+                s.n.load(), s.deep.load(), sec);
+    }
+}
+
 static void runPass(int threads) {
+    for (auto& s : threadStatus) {
+        s.phase = 0;
+        for (auto& d : s.depth) d.store(0, std::memory_order_relaxed);
+    }
     nextJob = 0;
     jobsDone = 0;
     totalFound = 0;
@@ -726,9 +947,9 @@ static void runPass(int threads) {
     running = threads;
     std::vector<std::thread> pool;
     for (int i = 0; i < threads; i++)
-        pool.emplace_back([] {
+        pool.emplace_back([i] {
             auto w = std::make_unique<Worker>();
-            w->run();
+            w->run(i);
             running--;
         });
     const auto t0 = std::chrono::steady_clock::now();
@@ -739,7 +960,12 @@ static void runPass(int threads) {
         if (s - lastPrint >= 60) {
             lastPrint = s;
             printf("  %.0f s: %zu of %zu jobs, found %llu; %s\n", s, jobsDone.load(), jobs.size(),
-                (unsigned long long)totalFound.load(), depthLine().c_str());
+                (unsigned long long)totalFound.load(), depthLine(true).c_str());
+            if (smallKeep) {
+                std::lock_guard<std::mutex> g(smallLock);
+                printf("    classes recorded: %zu\n", smallClasses.size());
+            }
+            if (threadLines) printThreads(threads);
             fflush(stdout);
         }
     }
@@ -807,6 +1033,249 @@ static int mergeFiles(int argc, char** argv) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Continuation: k18u1f N type continue threads file1 [file2 ...]
+//
+// Second pass for starters, e.g. the K-row classes written by U1F_SMALLROWS + U1F_SMALLKEEP.
+// Each class is relabelled so that its first two rows are the standard pair; its other rows are
+// then fixed, and the missing N-1-R rows are searched among all candidates compatible with every
+// row of the class: one candidate from each missing partner group of vertex 0, pairwise
+// compatible (bit matrix, smallest group first, cut as soon as a group has no candidate left).
+// Every uniform 1-factorisation found is recorded by class with |Aut| in K<N>_U1F_continued_<type>.txt.
+// Per class the most rows reached is counted, so the output says how far the starters get.
+// Input: class files as written by writeClasses, or the .part files of U1F_SMALLKEEP.
+// The candidate lists must be the full ones: U1F_CYCLE4FIRST and U1F_FIXEDROWS are refused.
+
+// Read classes from a writeClasses file or from a U1F_SMALLKEEP .part file (one class per line:
+// aut, then R rows of N partners each). Returns false if the file cannot be read.
+static bool readAnyClasses(const std::string& path, std::vector<ClassRecord>& out) {
+    FILE* f = fopen(path.c_str(), "r");
+    if (!f) { printf("cannot read %s\n", path.c_str()); return false; }
+    const int first = fgetc(f);
+    fclose(f);
+    if (first == '=') {
+        std::string type;
+        int rows;
+        const int keepN = N;
+        const bool ok = readClassFile(path.c_str(), type, rows, out);
+        N = keepN;
+        return ok;
+    }
+    f = fopen(path.c_str(), "r");
+    static char line[16384];
+    while (fgets(line, sizeof line, f)) {
+        const size_t len = strlen(line);
+        if (len == 0 || line[len - 1] != '\n') break;   // a cut last line
+        std::vector<long> t;
+        char* p = line;
+        for (;;) {
+            char* end;
+            const long x = strtol(p, &end, 10);
+            if (end == p) break;
+            t.push_back(x);
+            p = end;
+        }
+        if (t.size() < 1 + 3 * (size_t)N || (t.size() - 1) % N) continue;
+        ClassRecord c{ {}, (uint64_t)t[0] };
+        bool ok = true;
+        for (size_t r = 0; r < (t.size() - 1) / N && ok; r++) {
+            Match m{};
+            for (int v = 0; v < N; v++) {
+                const long x = t[1 + r * N + v];
+                ok = ok && x >= 0 && x < N;
+                m[v] = (int8_t)x;
+            }
+            c.rows.push_back(m);
+        }
+        if (ok) out.push_back(c);
+    }
+    fclose(f);
+    return true;
+}
+
+// The permutations fixing R1 and R2 (all pair symmetries but the exchange), as in the max pass.
+static void buildPairGroup(const std::vector<int>& cycles) {
+    auto gens = pairSymmetries(cycles);
+    gens.pop_back();
+    std::array<int8_t, 32> identity{};
+    for (int i = 0; i < N; i++) identity[i] = (int8_t)i;
+    std::set<std::array<int8_t, 32>> group = { identity };
+    pairGroup = { identity };
+    for (size_t i = 0; i < pairGroup.size(); i++)
+        for (const auto& g : gens) {
+            std::array<int8_t, 32> c{};
+            for (int v = 0; v < N; v++) c[v] = g[pairGroup[i][v]];
+            if (group.insert(c).second) pairGroup.push_back(c);
+        }
+}
+
+// Search the missing rows of one class. Returns the most rows reached (R if no row can be added).
+struct ContSearch {
+    std::vector<const Match*> cand;             // candidates compatible with every row of the class
+    std::vector<std::vector<uint64_t>> groupMask;   // per missing partner: its candidates
+    std::vector<uint64_t> adj;                  // cand x cand compatibility, W words per row
+    int W = 0, base = 0, deepest = 0;
+    uint64_t full = 0;
+    std::vector<Match> rows;                    // R1, R2, the class rows, then the chosen ones
+
+    void dfs(const std::vector<uint64_t>& live, int need) {
+        if ((int)rows.size() > deepest) deepest = (int)rows.size();
+        if (need == 0) {
+            full++;
+            std::vector<const Match*> P;
+            for (const Match& m : rows) P.push_back(&m);
+            addPartial(P);
+            return;
+        }
+        int best = -1, bestCount = INT32_MAX;
+        for (size_t g = 0; g < groupMask.size(); g++) {
+            int cnt = 0;
+            bool any = false;
+            for (int w = 0; w < W; w++) {
+                const uint64_t x = live[w] & groupMask[g][w];
+                any = any || x;
+                cnt += popcnt64(x);
+            }
+            if (!any) continue;                 // filled already, or dead (counted below)
+            if (cnt < bestCount) { bestCount = cnt; best = (int)g; }
+        }
+        // Groups still to fill = need; a group with no live candidate that is not yet filled
+        // ends the branch. Filled groups have no live candidates either, so count the live ones.
+        int liveGroups = 0;
+        for (size_t g = 0; g < groupMask.size(); g++)
+            for (int w = 0; w < W; w++)
+                if (live[w] & groupMask[g][w]) { liveGroups++; break; }
+        if (liveGroups < need || best < 0) return;
+        std::vector<uint64_t> next(W);
+        for (int w = 0; w < W; w++)
+            for (uint64_t bits = live[w] & groupMask[best][w]; bits; bits &= bits - 1) {
+                const int c = 64 * w + ctz64(bits);
+                const uint64_t* a = &adj[(size_t)c * W];
+                for (int u = 0; u < W; u++) next[u] = live[u] & a[u];
+                for (int u = 0; u < W; u++) next[u] &= ~groupMask[best][u];   // the group is filled
+                rows.push_back(*cand[c]);
+                dfs(next, need - 1);
+                rows.pop_back();
+            }
+    }
+};
+
+static int runContinue(int argc, char** argv, int threads) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto secs = [&] {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    };
+    std::vector<ClassRecord> in;
+    for (int a = 5; a < argc; a++) {
+        const size_t before = in.size();
+        if (!readAnyClasses(argv[a], in)) return 3;
+        printf("%s: %zu classes\n", argv[a], in.size() - before);
+    }
+    {   // the same class may come from several shards
+        std::set<Hash> seen;
+        std::vector<ClassRecord> unique;
+        for (auto& c : in) {
+            std::vector<Match> r = c.rows;
+            if (seen.insert(sortAndHash(r)).second) unique.push_back(c);
+        }
+        in.swap(unique);
+    }
+    std::vector<const Match*> all;
+    for (const auto& p : parts)
+        for (const Match& m : p) all.push_back(&m);
+    printf("continue: %zu distinct classes, %zu candidates, %d threads\n", in.size(), all.size(), threads);
+    fflush(stdout);
+
+    std::vector<int> deepest(in.size(), 0);
+    std::atomic<size_t> next{0}, done{0};
+    std::atomic<uint64_t> fullTotal{0};
+    std::atomic<int> running{threads};
+    std::vector<std::thread> pool;
+    for (int t = 0; t < threads; t++)
+        pool.emplace_back([&] {
+            for (size_t i; (i = next.fetch_add(1)) < in.size();) {
+                const ClassRecord& cls = in[i];
+                const int R = (int)cls.rows.size();
+                const auto sigma = toStandard(cls.rows[0], cls.rows[1]);
+                std::vector<Match> rest;
+                for (int r = 2; r < R; r++) rest.push_back(applyPerm(sigma, cls.rows[r]));
+                // Edges of the class rows, per vertex: a candidate using one is never compatible.
+                std::array<uint32_t, 32> used{};
+                for (const Match& m : rest)
+                    for (int v = 0; v < N; v++) used[v] |= 1u << m[v];
+                ContSearch s;
+                s.rows = { R1, R2 };
+                s.rows.insert(s.rows.end(), rest.begin(), rest.end());
+                s.deepest = R;
+                std::map<int, int> groupOf;     // partner of 0 -> group index
+                std::vector<int> candGroup;
+                for (const Match* c : all) {
+                    bool good = true;
+                    for (int v = 0; v < N && good; v++) good = !((used[v] >> (*c)[v]) & 1);
+                    for (size_t r = 0; r < rest.size() && good; r++) good = compat(*c, rest[r]);
+                    if (!good) continue;
+                    const int p = (*c)[0];
+                    if (!groupOf.count(p)) groupOf[p] = (int)groupOf.size();
+                    s.cand.push_back(c);
+                    candGroup.push_back(groupOf[p]);
+                }
+                const int need = N - 1 - R;
+                if (need > 0 && (int)groupOf.size() >= need) {
+                    const int K = (int)s.cand.size();
+                    s.W = (K + 63) / 64;
+                    s.groupMask.assign(groupOf.size(), std::vector<uint64_t>(s.W, 0));
+                    std::vector<uint64_t> live(s.W, 0);
+                    for (int c = 0; c < K; c++) {
+                        s.groupMask[candGroup[c]][c / 64] |= 1ULL << (c % 64);
+                        live[c / 64] |= 1ULL << (c % 64);
+                    }
+                    s.adj.assign((size_t)K * s.W, 0);
+                    for (int x = 0; x < K; x++)
+                        for (int y = x + 1; y < K; y++)
+                            if (candGroup[x] != candGroup[y] && compat(*s.cand[x], *s.cand[y])) {
+                                s.adj[(size_t)x * s.W + y / 64] |= 1ULL << (y % 64);
+                                s.adj[(size_t)y * s.W + x / 64] |= 1ULL << (x % 64);
+                            }
+                    s.dfs(live, need);
+                }
+                else if (need == 0) {           // the class is already complete
+                    std::vector<const Match*> P;
+                    for (const Match& m : s.rows) P.push_back(&m);
+                    addPartial(P);
+                    s.full = 1;
+                }
+                deepest[i] = s.deepest;
+                fullTotal += s.full;
+                done++;
+            }
+            running--;
+        });
+    double lastPrint = 0;
+    while (running.load() > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const double s = secs();
+        if (s - lastPrint >= 60) {
+            lastPrint = s;
+            printf("  %.0f s: %zu of %zu classes, %llu full found\n", s, done.load(), in.size(),
+                (unsigned long long)fullTotal.load());
+            fflush(stdout);
+        }
+    }
+    for (auto& t : pool) t.join();
+
+    std::map<int, size_t> hist;
+    for (int d : deepest) hist[d]++;
+    printf("most rows reached, per class:");
+    for (const auto& e : hist) printf(" %d rows: %zu", e.first, e.second);
+    printf("\n");
+    const std::string name = "K" + std::to_string(N) + "_U1F_continued_" + argv[2] + ".txt";
+    if (!writeClasses(results.classes, name, argv[2], N - 1)) return 3;
+    printf("RESULT K%d type %s, continue %zu classes: %zu uniform 1-factorisation classes (%llu labelled), "
+        "%.1f s, in %s\n", N, argv[2], in.size(), results.classes.size(),
+        (unsigned long long)fullTotal.load(), secs(), name.c_str());
+    return 0;
+}
+
 static int run(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "merge") {
         if (argc < 4) { printf("usage: k18u1f merge out.txt in1.txt [in2.txt ...]\n"); return 2; }
@@ -816,6 +1285,7 @@ static int run(int argc, char** argv) {
         printf("usage: k18u1f N type [rows|max] [threads] [hold]        e.g. k18u1f 18 4.14\n"
                "       k18u1f N type max threads K first last          one shard of the K-row max pass\n"
                "       k18u1f N type extend classes.txt [threads]       ways to add one row to each class\n"
+               "       k18u1f N type continue threads f1 [f2 ...]       complete each class to N-1 rows\n"
                "       k18u1f merge out.txt in1.txt [in2.txt ...]\n");
         return 2;
     }
@@ -829,9 +1299,14 @@ static int run(int argc, char** argv) {
     for (int c : cycles) { sum += c; ok = ok && c >= 4 && c % 2 == 0; }
     maxMode = argc > 3 && std::string(argv[3]) == "max";
     const bool extendMode = argc > 4 && std::string(argv[3]) == "extend";
-    rowsWanted = argc > 3 && !maxMode && !extendMode ? atoi(argv[3]) : N - 1;
+    const bool continueMode = argc > 5 && std::string(argv[3]) == "continue";
+    rowsWanted = argc > 3 && !maxMode && !extendMode && !continueMode ? atoi(argv[3]) : N - 1;
     const int threads = extendMode ? (argc > 5 ? atoi(argv[5]) : 8) : argc > 4 ? atoi(argv[4]) : 8;
-    if (argc > 5) holdLimit = (size_t)atoll(argv[5]);
+    if (argc > 5 && !continueMode) holdLimit = (size_t)atoll(argv[5]);
+    if (continueMode && (cycle4First || fixedRows || smallRows)) {
+        printf("continue needs the full candidate lists: unset U1F_CYCLE4FIRST, U1F_FIXEDROWS, U1F_SMALLROWS\n");
+        return 2;
+    }
     if (!ok || sum != N || rowsWanted < 3 || rowsWanted > N - 1 || threads < 1) {
         printf("bad arguments: N even 4..32, type = even parts >= 4 summing to N, 3 <= rows <= N-1\n");
         return 2;
@@ -887,11 +1362,33 @@ static int run(int argc, char** argv) {
             });
         for (auto& t : pool) t.join();
     }
+    const std::string tag = std::string(argv[2]) + (cycle4First ? "_c4first" : "");
+    if (cycle4First) {
+        if (cycles[0] != 4) { printf("U1F_CYCLE4FIRST needs a 4-cycle in the type\n"); return 2; }
+        // 0 -m-> p -R1-> q -m-> R1(0) -R1-> 0 closes a 4-cycle exactly when m[q] = R1[0].
+        for (auto& p : parts)
+            p.erase(std::remove_if(p.begin(), p.end(),
+                [](const Match& m) { return m[R1[m[0]]] != R1[0]; }), p.end());
+        printf("U1F_CYCLE4FIRST: SUBSET search, only candidates with vertex 0 on a 4-cycle with row 1\n");
+    }
     std::sort(parts.begin(), parts.end(),
         [](const std::vector<Match>& a, const std::vector<Match>& b) { return a.size() < b.size(); });
+    if (fixedRows) {
+        if (maxMode || rowsWanted >= N - 1) { printf("U1F_FIXEDROWS needs rows < N-1, not max\n"); return 2; }
+        parts.resize(rowsWanted - 2);
+        printf("U1F_FIXEDROWS: existence test on the %d rows with the fewest candidates, partners of 0:",
+            rowsWanted - 2);
+        for (const auto& p : parts) printf(" %d(%zu)", p.empty() ? -1 : p[0][0], p.size());
+        printf("\n");
+    }
 
     size_t candidates = 0;
     for (const auto& p : parts) candidates += p.size();
+
+    if (continueMode) {
+        buildPairGroup(cycles);
+        return runContinue(argc, argv, threads);
+    }
 
     if (extendMode) {
         // k18u1f N type extend file.txt [threads]: for each class in the file, the number of
@@ -949,7 +1446,26 @@ static int run(int argc, char** argv) {
             while (uf[x] != x) x = uf[x] = uf[uf[x]];
             return x;
         };
-        for (const auto& g : pairSymmetries(cycles))
+        auto orbitGens = pairSymmetries(cycles);
+        if (cycle4First) {
+            // The subset is kept only by the symmetries fixing R1, R2 and vertex 0: list the
+            // group fixing R1 and R2 (all generators but the exchange) and keep those elements.
+            auto g0 = orbitGens;
+            g0.pop_back();
+            std::array<int8_t, 32> e0{};
+            for (int v = 0; v < N; v++) e0[v] = (int8_t)v;
+            std::set<std::array<int8_t, 32>> seen = { e0 };
+            std::vector<std::array<int8_t, 32>> all = { e0 };
+            for (size_t i = 0; i < all.size(); i++)
+                for (const auto& g : g0) {
+                    std::array<int8_t, 32> c{};
+                    for (int v = 0; v < N; v++) c[v] = g[all[i][v]];
+                    if (seen.insert(c).second) all.push_back(c);
+                }
+            orbitGens.clear();
+            for (const auto& h : all) if (h[0] == 0) orbitGens.push_back(h);
+        }
+        for (const auto& g : orbitGens)
             for (const auto& e : index) {
                 const auto it = index.find(applyPerm(g, e.first));
                 if (it == index.end()) {
@@ -1021,6 +1537,18 @@ static int run(int argc, char** argv) {
     printf("K%d type %s, %d rows: %zu candidates, %zu root jobs, %d threads\n",
         N, argv[2], rowsWanted, candidates, jobs.size(), threads);
     fflush(stdout);
+    std::string jobRange;
+    if (fixedRows && getenv("U1F_JOBS")) {
+        size_t first = 0, last = 0;
+        if (sscanf(getenv("U1F_JOBS"), "%zu %zu", &first, &last) != 2) { printf("U1F_JOBS=\"first last\"\n"); return 2; }
+        const size_t total = jobs.size();
+        first = std::min(first, total);
+        last = std::min(last, total);
+        if (first >= last) { printf("U1F_JOBS: first < last needed\n"); return 2; }
+        jobs = std::vector<Job>(jobs.begin() + first, jobs.begin() + last);
+        jobBase = first;
+        jobRange = ", jobs " + std::to_string(first) + "-" + std::to_string(last) + " of " + std::to_string(total);
+    }
 
     if (maxMode && argc > 7) {
         // One shard: every class with exactly K rows whose root is a job in [first, last).
@@ -1031,10 +1559,38 @@ static int run(int argc, char** argv) {
         const size_t last = std::min((size_t)atoll(argv[7]), total);
         if (K < 3 || K > N - 1 || first >= last) { printf("bad shard: K 3..N-1, first < last\n"); return 2; }
         jobs = std::vector<Job>(jobs.begin() + first, jobs.begin() + last);
+        jobBase = first;
         rowsWanted = K;
-        collecting = true;
+        collecting = !smallRows || smallKeep;
+        const std::string smallName = "K" + std::to_string(N) + "_U1F_small_" + tag + "_k" + std::to_string(K) +
+            "_" + std::to_string(first) + "-" + std::to_string(last) + ".txt";
+        if (smallKeep) openSmall(smallName, K);
         runPass(threads);
-        const std::string name = "K" + std::to_string(N) + "_U1F_max_" + argv[2] + "_k" + std::to_string(K) +
+        if (smallKeep) {
+            if (smallPart) fclose(smallPart);
+            if (smallDone) fclose(smallDone);
+            smallPart = smallDone = nullptr;
+            if (!writeClasses(smallClasses, smallName, argv[2], K)) return 3;
+            printf("RESULT K%d type %s%s, %d smallest rows per job, jobs %zu-%zu of %zu: %zu jobs HIT (this run),"
+                " %zu classes (%llu labelled finds this run), %.1f s, in %s; %s\n", N, argv[2],
+                cycle4First ? " c4first" : "", K, first, last, total, jobsHit.load(), smallClasses.size(),
+                (unsigned long long)totalFound.load(), seconds(), smallName.c_str(), depthLine().c_str());
+            return 0;
+        }
+        if (smallRows) {
+            printf("RESULT K%d type %s%s, %d smallest rows per job, jobs %zu-%zu of %zu: %zu jobs HIT, %zu have no U1F, %.1f s; %s\n",
+                N, argv[2], cycle4First ? " c4first" : "", K, first, last, total, jobsHit.load(),
+                (last - first) - jobsHit.load(), seconds(), depthLine().c_str());
+            const std::string name = "K" + std::to_string(N) + "_U1F_small_" + tag + "_k" + std::to_string(K) +
+                "_" + std::to_string(first) + "-" + std::to_string(last) + ".txt";
+            if (FILE* f = fopen(name.c_str(), "w")) {
+                fprintf(f, "K%d type %s%s, U1F_SMALLROWS K=%d, jobs %zu-%zu of %zu: %zu jobs HIT\n", N, argv[2],
+                    cycle4First ? " c4first" : "", K, first, last, total, jobsHit.load());
+                fclose(f);
+            }
+            return 0;
+        }
+        const std::string name = "K" + std::to_string(N) + "_U1F_max_" + tag + "_k" + std::to_string(K) +
             "_" + std::to_string(first) + "-" + std::to_string(last) + ".txt";
         if (!writeClasses(results.classes, name, argv[2], K)) return 3;
         printf("RESULT K%d type %s, %d rows, jobs %zu-%zu of %zu: %zu classes, %.1f s, in %s; %s\n", N, argv[2], K,
@@ -1062,7 +1618,7 @@ static int run(int argc, char** argv) {
         uint64_t copies = 0;
         for (const ClassRecord& c : results.classes)
             copies += largest * (uint64_t)(largest - 1) * pairGroup.size() / c.aut;
-        const std::string name = "K" + std::to_string(N) + "_U1F_max_" + argv[2] + ".txt";
+        const std::string name = "K" + std::to_string(N) + "_U1F_max_" + tag + ".txt";
         if (!writeClasses(results.classes, name, argv[2], largest)) return 3;
         printf("RESULT K%d type %s: largest %d rows, %zu classes, %llu labelled copies, %.1f s, in %s\n",
             N, argv[2], largest, results.classes.size(), (unsigned long long)copies, seconds(), name.c_str());
@@ -1072,7 +1628,7 @@ static int run(int argc, char** argv) {
     collecting = trackDeep = rowsWanted == N - 1;
     runPass(threads);
     if (collecting) {
-        const std::string tail = std::string("_") + argv[2] + ".txt";
+        const std::string tail = std::string("_") + tag + ".txt";
         const std::string prefix = "K" + std::to_string(N) + "_U1F";
         if (!results.classes.empty()) {
             const std::string name = prefix + tail;
@@ -1087,6 +1643,14 @@ static int run(int argc, char** argv) {
             deepFull.load() ? "at least " : "", deep.classes.size(), deepName.c_str());
         printf("RESULT K%d type %s, %d rows: %zu classes (nodes %llu, %.1f s)\n", N, argv[2], rowsWanted,
             results.classes.size(), (unsigned long long)totalNodes.load(), seconds());
+        return 0;
+    }
+    if (fixedRows) {
+        printf("RESULT K%d type %s%s, %d fixed rows%s: %s (nodes %llu, %.1f s); %s\n", N, argv[2],
+            cycle4First ? " c4first" : "", rowsWanted, jobRange.c_str(),
+            totalFound.load() ? "a partial EXISTS (proves nothing)"
+                : jobRange.empty() && !cycle4First ? "NONE, so no U1F of this type" : "none in this part",
+            (unsigned long long)totalNodes.load(), seconds(), depthLine().c_str());
         return 0;
     }
     printf("RESULT K%d type %s, %d rows: found %llu (nodes %llu, %.1f s)\n", N, argv[2], rowsWanted,
