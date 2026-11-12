@@ -1,6 +1,6 @@
-// k18u1f: exhaustive search for uniform 1-factorizations of K_N of one cycle type.
+// knu1f (formerly k18u1f): exhaustive search for uniform 1-factorizations of K_N of one cycle type.
 //
-//   k18u1f N type [rows] [threads]      e.g.  k18u1f 18 4.14
+//   knu1f N type [rows] [threads]      e.g.  knu1f 18 4.14
 //
 // A factorization is uniform of a type when every pair of its factors has that type. Any two
 // factors can be relabelled to one standard pair for the type, so rows 1 and 2 are fixed and
@@ -17,18 +17,18 @@
 // with the most rows the search reached, up to `hold` classes, in K<N>_U1F_deepest_<type>.txt. The
 // search abandons a branch once any row is out of candidates, so that size is not the maximum.
 //
-//   k18u1f N type max [threads]
+//   knu1f N type max [threads]
 //
 // finds the largest number of rows any partial factorization of the type reaches, and writes one
 // record per isomorphism class at that size, with |Aut|, to K<N>_U1F_max_<type>.txt. Orbits of
 // candidates are numbered, and the root of a job only combines with candidates of its own or a
 // later orbit: a symmetry takes any partial to one whose smallest orbit is met at the root.
 //
-//   k18u1f N type max threads K first last      one shard: the K-row pass for root jobs [first, last)
-//   k18u1f N type extend classes.txt [threads]  for each class, the ways to add one more row
-//   k18u1f N type continue threads f1 [f2 ...]  complete each class (e.g. U1F_SMALLKEEP starters,
+//   knu1f N type max threads K first last      one shard: the K-row pass for root jobs [first, last)
+//   knu1f N type extend classes.txt [threads]  for each class, the ways to add one more row
+//   knu1f N type continue threads f1 [f2 ...]  complete each class (e.g. U1F_SMALLKEEP starters,
 //                                               .txt or .part) to N-1 rows; see runContinue
-//   k18u1f merge out.txt in1.txt [in2.txt ...]   union of shard files, as a single run writes it
+//   knu1f merge out.txt in1.txt [in2.txt ...]   union of shard files, as a single run writes it
 //
 // Every pass line and RESULT line ends with "rows 3..K: n3 ... nK", the number of branches that
 // held 3, 4, ... K rows (nK = found). On Windows the program says "k task exit ok" at the end, as
@@ -259,7 +259,7 @@ static const bool cycle4First = getenv("U1F_CYCLE4FIRST") != nullptr;
 // a find proves nothing. Roots: every candidate of the smallest kept row (no symmetry used); the
 // pass stops at the first find. Env U1F_JOBS="first last" runs only root jobs [first, last).
 static const bool fixedRows = getenv("U1F_FIXEDROWS") != nullptr;
-// Per-job existence test in a max shard (k18u1f N type max threads K first last), env U1F_SMALLROWS:
+// Per-job existence test in a max shard (knu1f N type max threads K first last), env U1F_SMALLROWS:
 // each job keeps only the K-3 rows with the fewest candidates kept for its root, so its matrix
 // holds only those. A U1F rooted at the job has a row in each of them, so a job with no K-row
 // partial there has no U1F; a job with one prints "HIT job j" (the full 19-row search must decide
@@ -1009,7 +1009,7 @@ static bool readClassFile(const char* path, std::string& type, int& rows, std::v
     return true;
 }
 
-// k18u1f merge out.txt in1.txt in2.txt ... : union of class files of one type and size, each class
+// knu1f merge out.txt in1.txt in2.txt ... : union of class files of one type and size, each class
 // once, sorted as a single run would write it. Classes are canonical, so equal classes have equal rows.
 static int mergeFiles(int argc, char** argv) {
     std::set<std::vector<Match>> have;
@@ -1034,7 +1034,7 @@ static int mergeFiles(int argc, char** argv) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Continuation: k18u1f N type continue threads file1 [file2 ...]
+// Continuation: knu1f N type continue threads file1 [file2 ...]
 //
 // Second pass for starters, e.g. the K-row classes written by U1F_SMALLROWS + U1F_SMALLKEEP.
 // Each class is relabelled so that its first two rows are the standard pair; its other rows are
@@ -1278,15 +1278,15 @@ static int runContinue(int argc, char** argv, int threads) {
 
 static int run(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "merge") {
-        if (argc < 4) { printf("usage: k18u1f merge out.txt in1.txt [in2.txt ...]\n"); return 2; }
+        if (argc < 4) { printf("usage: knu1f merge out.txt in1.txt [in2.txt ...]\n"); return 2; }
         return mergeFiles(argc, argv);
     }
     if (argc < 3) {
-        printf("usage: k18u1f N type [rows|max] [threads] [hold]        e.g. k18u1f 18 4.14\n"
-               "       k18u1f N type max threads K first last          one shard of the K-row max pass\n"
-               "       k18u1f N type extend classes.txt [threads]       ways to add one row to each class\n"
-               "       k18u1f N type continue threads f1 [f2 ...]       complete each class to N-1 rows\n"
-               "       k18u1f merge out.txt in1.txt [in2.txt ...]\n");
+        printf("usage: knu1f N type [rows|max] [threads] [hold]        e.g. knu1f 18 4.14\n"
+               "       knu1f N type max threads K first last          one shard of the K-row max pass\n"
+               "       knu1f N type extend classes.txt [threads]       ways to add one row to each class\n"
+               "       knu1f N type continue threads f1 [f2 ...]       complete each class to N-1 rows\n"
+               "       knu1f merge out.txt in1.txt [in2.txt ...]\n");
         return 2;
     }
     N = atoi(argv[1]);
@@ -1391,7 +1391,7 @@ static int run(int argc, char** argv) {
     }
 
     if (extendMode) {
-        // k18u1f N type extend file.txt [threads]: for each class in the file, the number of
+        // knu1f N type extend file.txt [threads]: for each class in the file, the number of
         // matchings compatible with all its rows, i.e. of ways to add one more row.
         std::string ftype;
         int k;

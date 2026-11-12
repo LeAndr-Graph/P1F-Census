@@ -3,7 +3,8 @@
 **No uniform 1-factorization of K18 has a non-Hamiltonian cycle type.** The seven such types are
 4.4.4.6, 4.4.10, 4.6.8, 4.14, 6.6.6, 6.12 and 8.10; every search below finds nothing.
 
-`run.bat` builds `tools/k18u1f.cpp` if needed, runs all seven types and checks the result. The
+`run.bat` builds `tools/knu1f.cpp` (formerly `k18u1f.cpp`; see `tools/knu1f_README.md`) if
+needed, runs all seven types and checks the result. The
 program reads no input file. Times are for 8 threads on a laptop (Intel Core
 i7-12700H).
 
@@ -21,7 +22,7 @@ i7-12700H).
 It measures the pruning, not the mathematics: a branch is cut as soon as any unfilled row has no
 candidate left, so a better prune gives a smaller number, and the true largest partials (next section)
 are larger. The search keeps up to 1000 classes at that depth in `K18_U1F_deepest_<type>.txt`; the
-fifth argument of `k18u1f` changes the limit. `run.bat` checks both the zero and this depth.
+fifth argument of `knu1f` changes the limit. `run.bat` checks both the zero and this depth.
 
 ## The search
 
@@ -39,7 +40,7 @@ and nothing for K16 4.12, 6.10, 8.8, 4.4.8, 4.6.6 and K14 4.10, 6.8, 4.4.6.
 ## Largest partial factorizations
 
 A partial is a set of pairwise edge-disjoint perfect matchings of K18 (rows), every two of which
-have the cycle type. `run_max.bat` runs `k18u1f 18 <type> max` per type and checks each output
+have the cycle type. `run_max.bat` runs `knu1f 18 <type> max` per type and checks each output
 byte for byte against `AllResults/K18_U1F_max_<type>.txt`, one record per isomorphism class with |Aut|.
 
 | type | rows | classes | time |
@@ -63,7 +64,7 @@ The 12-row pass finds no class (5.4 h at 8 threads), so the largest is 11; the 1
 collects all 707 classes at 11 rows (10.5 h), `AllResults/K18_U1F_max_4.14.txt`. Shards of a
 finished type merge to exactly its file in `AllResults`.
 
-**Extending a file.** `k18u1f 18 <type> extend <file>` counts, for each class in a class file, the
+**Extending a file.** `knu1f 18 <type> extend <file>` counts, for each class in a class file, the
 matchings compatible with all its rows, that is, the ways to add one more row. Every file in
 `AllResults` gives 0, as a largest partial must; for the 707 classes of 4.14 this takes 1.5 s.
 
