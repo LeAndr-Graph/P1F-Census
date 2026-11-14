@@ -240,6 +240,10 @@ static bool maxMode = false, collecting = false;
 // which fits in cache. 4096 measured best on 4.14, 12 rows, jobs 1000-1008: 44.5 s, against 92 s
 // without, 52 s at 16384 and much slower at 1024. Env U1F_LOCAL overrides it (0 = off).
 static const int localMax = getenv("U1F_LOCAL") ? atoi(getenv("U1F_LOCAL")) : 4096;
+// Middle matrix of at most midMax live candidates, compacted from the job's matrix once; the local
+// matrices of its subtrees are then compacted from it, reading its short rows instead of the job's.
+// 4.16 c4first K=11 job 0: 187 s against 878 s, identical classes. Env U1F_MID overrides (0 = off).
+static const int midMax = getenv("U1F_MID") ? atoi(getenv("U1F_MID")) : 32768;
 // Edge-overlap test before compat when a job's matrix is built; env U1F_NOEDGE switches it off.
 static const bool edgeFilter = getenv("U1F_NOEDGE") == nullptr;
 // Diagnostic, env U1F_POOLSTAT=s: per job, print the size of the root's kept list and, for up to s
@@ -561,6 +565,7 @@ static inline void putBits(uint64_t* dst, int p, uint64_t bits, int k) {
 class Worker {
     Ctx top;                                    // the job: all candidates compatible with the root
     Ctx local;                                  // one subtree, rebuilt on its live candidates only
+    Ctx mid;                                    // U1F_MID: a larger subtree between top and local
     std::vector<int> global;                    // local bit -> bit in top
     std::vector<const Match*> chosen;
     const Match* root = nullptr;
@@ -588,7 +593,9 @@ class Worker {
     // Copy level L of the job into `local`, keeping only the live candidates, each row packed into
     // its own words in the same order. The search of the subtree then reads a matrix of about
     // live x live bits, which fits in cache, instead of rows of the whole job.
-    void compact(int L, int nAct) {
+    // From level L of `src` into `dst` (src = top or mid; dst = mid or local).
+    void compact(Ctx& src, Ctx& local, int L, int nAct) {
+        Ctx& top = src;
         const uint64_t* cur = &top.alive[(size_t)L * top.W];
         std::array<Range, 32> ranges;
         int words = 0;
@@ -637,10 +644,12 @@ class Worker {
     // c.act[L][0..nAct) are rows with at least one candidate; nAct >= need >= 1.
     void dfs(Ctx& c, int L, int nAct, int need) {
         if (jobStop) return;
-        if (&c == &top && localMax > 0) {
+        if (&c != &local && localMax > 0) {
             int live = 0;
-            for (int j = 0; j < nAct && live <= localMax; j++) live += c.act[L][j].count;
-            if (live <= localMax) { compact(L, nAct); dfs(local, 0, nAct, need); return; }
+            const int lim = &c == &top && midMax > localMax ? midMax : localMax;
+            for (int j = 0; j < nAct && live <= lim; j++) live += c.act[L][j].count;
+            if (live <= localMax) { compact(c, local, L, nAct); dfs(local, 0, nAct, need); return; }
+            if (&c == &top && live <= lim) { compact(top, mid, L, nAct); dfs(mid, 0, nAct, need); return; }
         }
         nodes++;
         if (status && (nodes & 4095) == 0) {    // live counts for the progress line

@@ -65,6 +65,7 @@ Output and diagnostics:
 | `U1F_WALK=1` | use the cycle walk instead of the power test |
 | `U1F_NOEDGE=1` | no edge-overlap prefilter (only with the walk) |
 | `U1F_LOCAL=n` | subtree size for the cache-sized local matrix (default 4096; 0 = off) |
+| `U1F_MID=n` | subtree size for a middle matrix, compacted once from the job's matrix; the local matrices are compacted from it (default 32768; 0 = off; 4.16 c4first K=11 job 0: 187 s vs 878 s) |
 
 Compile-time: `/D U1F_ALIGNED_AND=1` (aligned AVX2 AND in the local matrix; measured no gain).
 
