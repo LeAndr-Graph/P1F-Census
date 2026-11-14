@@ -48,7 +48,7 @@ Search restrictions (each changes what is searched — read the "proves" column)
 | Variable | Effect | Proves |
 |---|---|---|
 | `U1F_CYCLE4FIRST=1` | keep only candidates with vertex 0 on a 4-cycle with R1 (types with a 4-cycle); orbits use only symmetries fixing 0, R1, R2; files tagged `_c4first` | **subset only**: a find is real, 0 proves nothing about the full type |
-| `U1F_SMALLROWS=1` (max shard) | each job keeps only its K-3 rows with the fewest root-compatible candidates; matrix ~ (K/N)^2; stops a job at its first find; prints `HIT job j` | job without HIT has no U1F (every U1F has a row in each of those groups) |
+| `U1F_SMALLROWS=1` (max shard) | each job keeps only its K-3 rows with the fewest root-compatible candidates; matrix ~ (K/N)^2; stops a job at its first find; prints `job j done, s s, found f` per finished job (`HIT job j ...` when f > 0) | job without HIT has no U1F (every U1F has a row in each of those groups) |
 | `U1F_SMALLKEEP=1` (with SMALLROWS) | do not stop at the first find: keep every K-row class (canonical hash only), appended to `<file>.part`; finished jobs to `<file>.done`; **resumable** | the kept classes are the starters for `continue` |
 | `U1F_FIXEDROWS=1` (rows < N-1) | whole run on the rows-2 partner groups with the fewest candidates; roots = all of the smallest group; stops at first find | 0 = no U1F of type T; a find proves nothing |
 | `U1F_JOBS="first last"` (with FIXEDROWS) | run only root jobs [first, last) | — |

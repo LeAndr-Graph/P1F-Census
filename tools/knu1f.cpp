@@ -892,12 +892,15 @@ public:
                 status->since = std::chrono::steady_clock::now().time_since_epoch().count();
                 status->phase = 1;
             }
+            const auto jobT0 = std::chrono::steady_clock::now();
             runJob(jobs[i]);
             atDepth[rowsWanted] = found;
             totalFound += found;
-            if (smallRows && found) {
-                jobsHit++;
-                printf("HIT job %zu\n", i + jobBase);
+            if (smallRows && found) jobsHit++;
+            if (smallRows) {                    // one line per finished job: number, time, result
+                const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - jobT0).count();
+                printf("%sjob %zu done, %.0f s, found %llu\n", found ? "HIT " : "", i + jobBase, sec,
+                    (unsigned long long)found);
                 fflush(stdout);
             }
             if (smallKeep && smallDone) {
@@ -963,7 +966,10 @@ static void runPass(int threads) {
                 (unsigned long long)totalFound.load(), depthLine(true).c_str());
             if (smallKeep) {
                 std::lock_guard<std::mutex> g(smallLock);
-                printf("    classes recorded: %zu\n", smallClasses.size());
+                std::string cur;                // jobs the threads are on now
+                for (int t = 0; t < threads && t < kMaxThreads; t++)
+                    if (threadStatus[t].phase.load()) cur += " " + std::to_string(threadStatus[t].job.load());
+                printf("    classes recorded: %zu; current jobs:%s\n", smallClasses.size(), cur.c_str());
             }
             if (threadLines) printThreads(threads);
             fflush(stdout);
